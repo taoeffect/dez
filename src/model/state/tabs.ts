@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Tab } from '../chat/types'
-import type { ConversationJobs } from '../persistence/types'
+import type { ConversationJobs, StoredViewPlace } from '../persistence/types'
 import { emptyContent } from '../chat/content'
 
 export const NEW_TAB_TITLE = 'New Tab'
@@ -61,6 +61,11 @@ export const useTabStore = defineStore('tabs', () => {
   // picks them up. A Map, so that no id can be a key of the prototype.
   const openJobs = ref(new Map<string, ConversationJobs>())
 
+  // The place of the view of the active tab's conversation
+  // (`dez.model/viewPlace/*`), which app_state.json keeps so that a
+  // restart shows the conversation where the user left it.
+  const viewPlace = ref<StoredViewPlace | null>(null)
+
   return {
     tabs,
     activeTabId,
@@ -69,5 +74,6 @@ export const useTabStore = defineStore('tabs', () => {
     replyEnds,
     closedTabs,
     openJobs,
+    viewPlace,
   }
 })

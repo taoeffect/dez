@@ -13,7 +13,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
 import { MODEL_SETTINGS_MIN_HEIGHT, MODEL_SETTINGS_SIZE_DEFAULT } from '../modelSettingsSize'
-import type { AppStatePayload, ConversationData, ConversationJobs, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
+import type { AppStatePayload, ConversationData, ConversationJobs, ModelCache, StoredJob, StoredMediaReply, StoredViewPlace } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ModelRequest } from '../providers/types'
@@ -603,6 +603,55 @@ describe('the open jobs of a conversation', () => {
     // History shows a file as it is.
     await sbp('dez.model/tabs/openConversation', 'later')
     expect(roles().at(-1)).toStrictEqual(['user', 'agent'])
+  })
+})
+
+describe('the view place of the active tab', () => {
+  const get = (conversationId: string) => sbp('dez.model/viewPlace/get', conversationId) as StoredViewPlace | null
+  const set = (place: StoredViewPlace) => sbp('dez.model/viewPlace/set', place)
+  const placeOf = (tab: Tab, pos = 40): StoredViewPlace => ({ conversationId: tab.conversationId, pos, offset: 7.5, anchor: 3, head: 9 })
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+  })
+
+  // Before the start of the persistence the tab store holds only the boot
+  // tab: a save would write over the user's saved tabs.
+  it('saves a changed place only after the start of the persistence, and only while its tab is active', async () => {
+    const tab = tabWithText('typed')
+    set(placeOf(tab))
+    await Promise.resolve()
+    expect(savedAppStates).toStrictEqual([])
+    expect([get(tab.conversationId), get('other')]).toStrictEqual([placeOf(tab), null])
+
+    sbp('dez.model/settings/startPersistence')
+    set(placeOf(tab, 41))
+    await vi.waitFor(() => expect(savedAppStates.at(-1)?.viewPlace).toStrictEqual(placeOf(tab, 41)))
+    const saves = savedAppStates.length
+    set(placeOf(tab, 41))
+    await Promise.resolve()
+    expect(savedAppStates).toHaveLength(saves)
+
+    sbp('dez.model/tabs/create')
+    await sbp('dez.model/appState/save')
+    expect(savedAppStates.at(-1)).not.toHaveProperty('viewPlace')
+  })
+
+  it('keeps through a restart only the place of the tab that becomes active', async () => {
+    const first = tabWithText('first')
+    const second = tabWithText('second')
+    sbp('dez.model/settings/startPersistence')
+    set(placeOf(second))
+    await vi.waitFor(() => expect(savedAppStates.at(-1)?.viewPlace).toStrictEqual(placeOf(second)))
+    const saved = savedAppStates.at(-1) as AppStatePayload
+
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', saved)
+    expect(get(second.conversationId)).toStrictEqual(placeOf(second))
+
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', { ...saved, viewPlace: placeOf(first) })
+    expect([get(first.conversationId), get(second.conversationId)]).toStrictEqual([null, null])
   })
 })
 

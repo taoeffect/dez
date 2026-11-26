@@ -10,7 +10,7 @@ import { isParameterValue, type ParameterValues } from '../providers/modelParame
 import { parseModelRefKey } from '../chat/modelRef'
 import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { isMoneyLimitUsd } from '../chat/moneyLimit'
-import type { AppStatePayload, ConversationJobs, StoredJob, StoredMediaReply } from './types'
+import type { AppStatePayload, ConversationJobs, StoredJob, StoredMediaReply, StoredViewPlace } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
@@ -113,6 +113,18 @@ const mediaReplySchema = z.object({
   providerJob: providerJobSchema,
 })
 
+// `StoredViewPlace`. A record that is not whole is dropped as a whole: the
+// tab then opens at its top. The view keeps each position within the doc.
+// The offset can be negative (the top padding of the editor), but not
+// infinite.
+const viewPlaceSchema = z.object({
+  conversationId: z.string().min(1),
+  pos: z.number().int().nonnegative(),
+  offset: z.number(),
+  anchor: z.number().int().nonnegative(),
+  head: z.number().int().nonnegative(),
+})
+
 type TabData = z.infer<typeof tabSchema>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,6 +142,11 @@ function defaultModel(value: unknown): DefaultModel | null {
 
 function windowGeometry(value: unknown): WindowGeometry | undefined {
   const result = windowGeometrySchema.safeParse(value)
+  return result.success ? result.data : undefined
+}
+
+function viewPlace(value: unknown): StoredViewPlace | undefined {
+  const result = viewPlaceSchema.safeParse(value)
   return result.success ? result.data : undefined
 }
 
@@ -399,6 +416,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
         ? parsed.incognitoOption
         : fallback.incognitoOption,
       openJobs: openJobs(parsed.openJobs),
+      viewPlace: viewPlace(parsed.viewPlace),
     }
   } catch {
     return defaultAppState()

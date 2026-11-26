@@ -257,6 +257,23 @@ describe('app state persistence format', () => {
     expect(parseWindow({ ...sizeOnly, x: 10 })).toBeUndefined()
     expect(parseWindow({ ...sizeOnly, y: 10 })).toBeUndefined()
   })
+
+  it('keeps a whole view place, writes no key for none, and drops a bad one as a whole', () => {
+    const place = { conversationId: 'c-1', pos: 1200, offset: 7.5, anchor: 1300, head: 1290 }
+    const parsePlace = (value: unknown) => parseAppStateJson(JSON.stringify({ viewPlace: value })).viewPlace
+    expect(parseAppStateJson(serializeAppStateJson({ viewPlace: place })).viewPlace).toStrictEqual(place)
+    expect(serializeAppStateJson(defaultAppState())).not.toContain('viewPlace')
+    expect(parseAppStateJson('{}').viewPlace).toBeUndefined()
+    expect(parsePlace({ ...place, conversationId: '' })).toBeUndefined()
+    expect(parsePlace({ ...place, head: undefined })).toBeUndefined()
+    expect(parsePlace({ ...place, pos: -1 })).toBeUndefined()
+    expect(parsePlace({ ...place, anchor: 2.5 })).toBeUndefined()
+    expect(parsePlace({ ...place, offset: -46 })).toStrictEqual({ ...place, offset: -46 })
+    expect(parsePlace({ ...place, offset: '7' })).toBeUndefined()
+    // JSON reads a number too large for a double as Infinity.
+    expect(parseAppStateJson(JSON.stringify({ viewPlace: place }).replace('7.5', '1e999')).viewPlace).toBeUndefined()
+    expect(parsePlace([place])).toBeUndefined()
+  })
 })
 
 describe('custom providers in app state', () => {

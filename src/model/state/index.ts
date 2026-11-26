@@ -18,7 +18,7 @@ import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { clampModelSettingsSize, type ModelSettingsSize } from '../modelSettingsSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore, type ReplyEnd } from './tabs'
-import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationJobs, ConversationSearchOutcome, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
+import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationJobs, ConversationSearchOutcome, ModelCache, StoredJob, StoredMediaReply, StoredViewPlace } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig, TokenPricePaths } from '../providers/config'
 import { withKeptClipData } from '../providers/keptClipData'
@@ -125,6 +125,14 @@ const persistPrompts = debounce(() => {
 const persistModelCache = debounce(() => {
   if (modelCachePersistenceReady) void saveModelCache()
 }, 1000)
+
+// True from `dez.model/settings/startPersistence`, which
+// `dez.controller/app/init` calls after the restore of the tabs. Before it,
+// the tab store holds only the boot tab, and a save of the app state would
+// write over the user's saved tabs.
+function appStateSavesStarted(): boolean {
+  return stopSettingsPersistWatch !== null
+}
 
 function cloneContentNode(node: ContentNode): ContentNode {
   return { ...node }
@@ -1091,6 +1099,8 @@ export default sbp('sbp/selectors/register', {
         // it), but written back, or the first save would drop it.
         incognitoOption: settings.incognitoOption,
         openJobs: Object.fromEntries(tabStore.openJobs),
+        // Only the place of the active tab: the next start shows no other.
+        viewPlace: tabStore.viewPlace?.conversationId === tabStore.activeTab.conversationId ? tabStore.viewPlace : undefined,
       })
     } catch (error) {
       console.error('Failed to save app state', error)
@@ -1098,7 +1108,7 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.model/appState/restore' (appState: unknown): Promise<void> {
-    const state = appState as { tabs?: TabData[]; activeTabId?: string | null; openJobs?: Record<string, ConversationJobs> }
+    const state = appState as { tabs?: TabData[]; activeTabId?: string | null; openJobs?: Record<string, ConversationJobs>; viewPlace?: StoredViewPlace }
     const tabsData = Array.isArray(state.tabs) ? state.tabs : []
     // Only a tab can pick up the jobs of its conversation (`dez.stream/
     // restoreJobs`): the records of the others go, so that the file does not
@@ -1154,9 +1164,12 @@ export default sbp('sbp/selectors/register', {
 
     if (restored.length > 0) {
       const tabStore = useTabStore()
+      const target = (state.activeTabId && restored.find((tab) => tab.id === state.activeTabId)) || restored[0]
+      // In the same tick as the active tab: the editor reads the place in
+      // the tick after, when it shows that tab.
+      tabStore.viewPlace = state.viewPlace?.conversationId === target.conversationId ? { ...state.viewPlace } : null
       tabStore.tabs = restored
-      const target = state.activeTabId && restored.find((tab) => tab.id === state.activeTabId)
-      tabStore.activeTabId = target ? target.id : restored[0].id
+      tabStore.activeTabId = target.id
     }
   },
 
@@ -1185,6 +1198,25 @@ export default sbp('sbp/selectors/register', {
     if (next.jobs || next.mediaReply) openJobs.set(conversationId, JSON.parse(json) as ConversationJobs)
     else openJobs.delete(conversationId)
     void sbp('dez.model/appState/save')
+  },
+
+  // The place of the view of the conversation `conversationId`
+  // (`StoredViewPlace`, persistence/types.ts): a copy, or null when Dez
+  // keeps none for it.
+  'dez.model/viewPlace/get' (conversationId: string): StoredViewPlace | null {
+    const place = useTabStore().viewPlace
+    return place?.conversationId === conversationId ? { ...place } : null
+  },
+
+  // Keeps the place of the view of the active tab, which the editor reports
+  // after the view stops moving. The app state saves at once, as no code
+  // runs at a quit, but only when the place changed, and only after the
+  // start of the persistence.
+  'dez.model/viewPlace/set' (place: StoredViewPlace): void {
+    const tabStore = useTabStore()
+    if (JSON.stringify(place) === JSON.stringify(tabStore.viewPlace)) return
+    tabStore.viewPlace = { ...place }
+    if (appStateSavesStarted()) void sbp('dez.model/appState/save')
   },
 
   'dez.model/activeModel' (): ActiveModel | null {

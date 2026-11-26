@@ -92,6 +92,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/assetPreview.ts`: the preview box of a mention chip: the asset that it names, which works there as in its place.
 - `view/editor/mentionPaste.ts`, `model/chat/mentionPaste.ts`: a paste of `@id` mentions copied in another conversation brings along the assets that they name.
 - `view/editor/focus.ts`: focus the editor and keep its scroll and caret; use `focusKeepingScroll`, not `view.focus()`.
+- `view/editor/viewPlace.ts`: read and show the view place (scroll and caret) of the active tab, which the next start of Dez shows again.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/imageZoom.ts`, `coverBox.ts`: the image zoom (the magnifier of an image's toolbar shows the image over the conversation view), and the box that it and the expanded view of an app cover.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin); `clipVolume.ts`, `model/clipVolume.ts`: the one remembered volume of each clip kind, and its saved value.
@@ -248,7 +249,7 @@ All app data is under `~/.config/dez/`, except the temp copies of clips and the 
 
 The JSON and conversation files go through `dez.persistence/*` only; the asset files go through `dez.native/*` from their controllers.
 
-- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers, and the open jobs of each conversation (`src/model/persistence/appState.ts`).
+- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers, the open jobs of each conversation, and the view place of the active tab (`src/model/persistence/appState.ts`).
 - `conversations/<sanitized-id>.md`: conversations (`src/model/persistence/conversationFormat.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists and fresh price quotes; no secrets and no raw provider entries (`src/model/persistence/modelCache.ts`).

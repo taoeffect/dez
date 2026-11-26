@@ -70,6 +70,8 @@ import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { applyCostChanges, costReset, tabCostSource } from '../editor/costReset'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
+import { putViewTop, readViewPlace, showViewPlace } from '../editor/viewPlace'
+import type { StoredViewPlace } from '../../model/persistence/types'
 
 const {
   activeTabId,
@@ -100,21 +102,46 @@ let viewConversationId: string | null = null
 let pendingPersistTabId: string | null = null
 let syncingViewStructure = false
 
-// Where the view was in each conversation that it left, so that it shows
-// the same place on a return: a tab switch, File › Reopen Closed Tab (the
-// reopened tab has a new tab id but the same conversation id), or History.
-// A conversation with no saved place starts at the top
+// Where the view was in each conversation that it left in this session, so
+// that it shows the same place on a return: a tab switch, File › Reopen
+// Closed Tab (the reopened tab has a new tab id but the same conversation
+// id), or History. A conversation with no place here can have the stored
+// place of the last session (`reportViewPlace`); else it starts at the top
 // (`resetViewToActiveTab`). The selection comes back too: a caret left at
 // the doc start would scroll the view back up at the first key press.
-// Session-only. The restore scrolls the view as a user scroll does, on
-// purpose: a place at the very bottom of a tab whose reply still streams
-// starts the stream follow again (`handleVisibleScroll` in
-// `src/view/editor/selectors.ts`).
+// The restore scrolls the view as a user scroll does, on purpose: a place
+// at the very bottom of a tab whose reply still streams starts the stream
+// follow again (`handleVisibleScroll` in `src/view/editor/selectors.ts`).
 interface ViewPlace {
   scroll: ReturnType<EditorView['scrollSnapshot']>
   selection: EditorSelection
 }
 const viewPlaces = new Map<string, ViewPlace>()
+
+// Tells the model where the view of its tab is, so that the next start of
+// Dez shows that place (`app_state.json`, `src/view/editor/viewPlace.ts`).
+// No code of Dez runs at a quit, so the place is saved while the user
+// works, after the view stops for 500 ms (the time of the window tracker,
+// `src/controller/window.ts`): a scroll in the last half second before a
+// quit can be lost. `viewTabId`, not the active tab: the view holds the
+// old tab for a tick after a switch.
+const reportViewPlace = debounce(() => {
+  if (!view || !viewTabId || !viewConversationId) return
+  sbp('dez.model/viewPlace/set', pendingViewPlace ?? readViewPlace(view, viewConversationId))
+}, 500)
+
+// The stored place that the start of Dez showed (within the doc), until
+// the user moves the view. After the show, an image or a player gets its
+// height when it loads, the editor font loads, and the parts of the window
+// around the editor get their sizes. Such a change can leave the view off
+// its place: a top edge inside a block that grows, or a place near the doc
+// end that a view of another height could not reach. CodeMirror's scroll
+// anchor then keeps the wrong place. So each change of the heights or of
+// the editor size puts the view at the place again (the update listener).
+// A doc change, a new selection, each rebuild, and the first input of the
+// user in the editor end it (`mountView`). While it is set, it is the
+// place that a report gives.
+let pendingViewPlace: StoredViewPlace | null = null
 
 function rememberViewPlace() {
   if (!view || !viewConversationId) return
@@ -902,6 +929,13 @@ function buildState(carried?: CarriedState): EditorState {
         if (update.docChanged || update.selectionSet || update.focusChanged) {
           updatePromptAutocomplete(update.view)
         }
+        if (update.docChanged || update.selectionSet) {
+          pendingViewPlace = null
+          // A change above the top line moves the place with no scroll event.
+          reportViewPlace()
+        } else if (pendingViewPlace && update.geometryChanged) {
+          putViewTop(update.view, pendingViewPlace)
+        }
         const findQuery = update.state.field(findQueryField)
         if (findQuery !== update.startState.field(findQueryField) || (findQuery && update.selectionSet)) {
           refreshFindStatus()
@@ -922,6 +956,8 @@ function buildState(carried?: CarriedState): EditorState {
         blur: () => {
           syncDocToStore()
           flushPendingPersist()
+          // A quit through a menu takes the focus first.
+          reportViewPlace.flush()
           closeAutocomplete()
           return false
         },
@@ -950,6 +986,14 @@ function mountView() {
   view.scrollDOM.addEventListener('load', onScrollerLateLoad, true)
   view.scrollDOM.addEventListener('loadedmetadata', onScrollerLateLoad, true)
   view.scrollDOM.addEventListener('scroll', checkScrollUp)
+  view.scrollDOM.addEventListener('scroll', () => reportViewPlace())
+  // Only the user moves the view with these. The scroll events cannot tell
+  // a move of the user: the writes of Dez and CodeMirror's scroll anchor
+  // send them too. A press on the scroll bar is a `pointerdown` of the
+  // scroller.
+  for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) {
+    view.dom.addEventListener(type, () => { pendingViewPlace = null }, { capture: true, passive: true })
+  }
   registerActiveView()
 }
 
@@ -1029,6 +1073,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // swap would insert a pill at a wrong position.
   closeAutocomplete()
   keepBottomOnLateLoad = false
+  pendingViewPlace = null
   cancelAnimationFrame(bottomScrollFrame)
   // A rebuild of the same tab, such as the reset at the end of each
   // stream, keeps the open thinking, tool call, and compaction panels, and
@@ -1050,6 +1095,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value
   const place = sameTab ? undefined : viewPlaces.get(viewConversationId)
+  const storedPlace = sameTab || place ? null : sbp('dez.model/viewPlace/get', viewConversationId) as StoredViewPlace | null
   if (streamEnd) {
     view.dispatch({
       selection: EditorSelection.cursor(view.state.doc.length),
@@ -1065,6 +1111,10 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
       effects: place.scroll,
       userEvent: 'select',
     })
+  } else if (storedPlace) {
+    // The place of the last session, at the start of Dez. Its dispatch
+    // also runs the find bookkeeping of the update listener.
+    pendingViewPlace = showViewPlace(view, storedPlace)
   } else {
     // CodeMirror's setState keeps the scroller's scrollTop, so another tab
     // with no saved place (a new tab, or a conversation not shown yet in
@@ -1078,6 +1128,9 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
       refreshFindStatus()
     }
   }
+  // The view now holds another doc, or another place in it: without a
+  // report, the stored place would stay that of the tab before.
+  reportViewPlace()
 }
 
 function onEditorStreamFinished(tabId: string, followBottom: boolean) {
@@ -1154,6 +1207,7 @@ onBeforeUnmount(() => {
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
   sbp('okTurtles.events/off', 'dez.editor.rebuild', onEditorRebuild)
   refreshFindStatusDebounced.clear()
+  reportViewPlace.clear()
   if (view) removeAppFrames(view)
   view?.destroy()
   view = null
@@ -1164,6 +1218,8 @@ onBeforeUnmount(() => {
 watch(
   () => activeTabId.value,
   (_newId, oldId) => {
+    // A report that is still due would read the old doc for the new tab.
+    reportViewPlace.clear()
     if (oldId) {
       rememberViewPlace()
       saveViewTabNow()

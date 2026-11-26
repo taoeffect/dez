@@ -183,6 +183,24 @@ export interface ConversationJobs {
   mediaReply?: StoredMediaReply
 }
 
+/** Where the view of the active tab's conversation was, so that the next
+ *  start of Dez shows it there (`dez.model/viewPlace/*`). Positions of the
+ *  editor doc and px only: no text, and no sentinel. The view writes and
+ *  reads it (`src/view/editor/viewPlace.ts`). */
+export interface StoredViewPlace {
+  conversationId: string
+  /** The doc position of the start of the line block at the top edge of
+   *  the view. */
+  pos: number
+  /** Px from the top of that block down to the top edge of the view. It is
+   *  negative when the top edge is above the first block, in the top padding
+   *  of the editor. */
+  offset: number
+  /** The main selection. */
+  anchor: number
+  head: number
+}
+
 export interface AppStatePayload {
   tabs?: unknown[]
   activeTabId?: string | null
@@ -231,4 +249,7 @@ export interface AppStatePayload {
   // restart picks them up (`dez.stream/restoreJobs`). A conversation with
   // none has no key, and the serializer writes no empty map.
   openJobs?: Record<string, ConversationJobs>
+  // The place of the view of the active tab, absent when Dez has none for
+  // that tab's conversation.
+  viewPlace?: StoredViewPlace
 }
