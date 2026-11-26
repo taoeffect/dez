@@ -198,9 +198,20 @@ export interface PanelFieldView {
 }
 
 /** The accessible name of the field of the value of the parameter `name`
- *  in a panel. */
-export function parameterFieldName (name: string): string {
-  return `Parameter ${name}`
+ *  in a panel: of the call of the panel, or of the tool call `callNumber`
+ *  (from 1) of the code of a `js_eval` call. */
+export function parameterFieldName (name: string, callNumber?: number): string {
+  return callNumber === undefined ? `Parameter ${name}` : `Parameter ${name} of tool call ${callNumber}`
+}
+
+/** The accessible names of the text fields of the open panel of the chip
+ *  `index` (doc order), in order; null while the panel is closed. */
+export async function panelFieldNames (browser: E2EBrowser, index: number): Promise<string[] | null> {
+  return browser.execute((chipIndex: number) => {
+    const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
+    if (!panel) return null
+    return Array.from(panel.querySelectorAll('textarea'), (field) => field.getAttribute('aria-label') ?? '')
+  }, index)
 }
 
 /** The text field whose accessible name is `name` in the open panel of the

@@ -956,12 +956,16 @@ export function createPictures(view: EditorView, pictures: readonly ShownPicture
 // The rows of the arguments `parameters` of a call: each name, then its
 // value, a text as it is and any other value as its JSON text. A value is
 // a read-only field with the look of plain text, so the user can select
-// and copy it (but not edit it); a name is not selectable.
-function createParameters(parameters: readonly [string, ToolArgumentValue][]): HTMLElement {
+// and copy it (but not edit it); a name is not selectable. The name of the
+// field of a value of the tool call `callNumber` of the code of a `js_eval`
+// call tells that call, as its result field does, so that no two fields
+// of a panel have the same name.
+function createParameters(parameters: readonly [string, ToolArgumentValue][], callNumber?: number): HTMLElement {
   const rows = span('dez-tool-call__parameters')
+  const owner = callNumber === undefined ? '' : ` of tool call ${callNumber}`
   for (const [name, value] of parameters) {
     const valueText = typeof value === 'string' ? value : JSON.stringify(value)
-    rows.append(span('dez-tool-call__parameter-name', name), createField(valueText, `Parameter ${name}`, '', 'dez-tool-call__parameter-value'))
+    rows.append(span('dez-tool-call__parameter-name', name), createField(valueText, `Parameter ${name}${owner}`, '', 'dez-tool-call__parameter-value'))
   }
   return rows
 }
@@ -990,7 +994,7 @@ function createBridgedCalls({ calls, more }: BridgedCalls): HTMLElement[] {
     if (word) title.appendChild(span('dez-tool-call__bridged-state', word))
     item.appendChild(title)
     const parameters = Object.entries(call.arguments)
-    if (parameters.length > 0) item.appendChild(createParameters(parameters))
+    if (parameters.length > 0) item.appendChild(createParameters(parameters, index + 1))
     const result = createField(call.result, `Result of tool call ${index + 1}`, call.status === 'cut' ? BRIDGED_CUT_TEXT : EMPTY_TOOL_RESULT)
     if (call.status === 'error') result.setAttribute('data-error', '')
     item.appendChild(result)

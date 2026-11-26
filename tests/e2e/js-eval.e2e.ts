@@ -20,7 +20,7 @@ import { processExists, runningProgram } from './harness/processes'
 import { mediaFacts, pixelColors } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabId, endedReply, newTab, openSeededConversation, openToasts, sbpCall, submit } from './harness/thread'
-import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
+import { codePanel, hiddenPart, hidingPart, intermediateParts, panelField, panelFieldNames, parameterFieldName, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
 // in this process. The app runs the code of each call in the real Deno of
@@ -638,6 +638,11 @@ describe('js_eval tool', () => {
       { name: 'video', status: 'success', stateWord: null, parameters: [['command', 'ffmpeg'], ['parameters', JSON.stringify(draw)]], failed: false },
     ])
     expect(calls[2].result.startsWith(jobStartedText(jobId, 1))).toBe(true)
+    // No two fields of the panel have the same name: the name of a value
+    // tells a screen reader the tool call of the code that it belongs to.
+    const fieldNames = await panelFieldNames(browser, 0) ?? []
+    expect(fieldNames.filter((name, at) => fieldNames.indexOf(name) !== at)).toStrictEqual([])
+    expect((await panelField(browser, 0, parameterFieldName('command', 3)))?.text).toBe('ffmpeg')
     await expectRunsEnded(setup)
   })
 
