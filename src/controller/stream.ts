@@ -203,6 +203,10 @@ interface ReplyRuntime {
   // of its conversation holds it (`recordMediaReply`). The end of the
   // reply deletes that record. Null for a chat reply, and before then.
   mediaJobId: string | null
+  // An image of the chat reply could not be saved (`writeReplyImage`): its
+  // error toast waits for the tab, so the end of the reply marks a tab in
+  // the background `error` (`endReply`).
+  imageSaveFailed: boolean
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -249,17 +253,18 @@ function handOverJobs(tabId: string, reply: ReplyRuntime): void {
   heldJobsByTab.set(tabId, reply.jobs.tabJobs)
 }
 
-// Ends the stream session of a reply. `failedJobs`: the session finished,
-// but the reply ends with the error toast of its failed jobs (`endReply`).
-function finalizeStream(tabId: string, session: EndedStreamSession | null, { failedJobs = false } = {}): void {
+// Ends the stream session of a reply. `failed`: the session finished, but
+// the reply ends with an error toast of the tab (the toast of its failed
+// jobs, or of an image that it could not save; `endReply`).
+function finalizeStream(tabId: string, session: EndedStreamSession | null, { failed = false } = {}): void {
   if (!session) return
   finalizeStreamSectionForTab(session)
   // A stop is the user's own act, so it marks nothing and gives no alert.
   // The mark of a tab in the background is `error` when the reply ends with
   // an error toast of the tab (`showReplyError`, the toast of a failed image
-  // save of a media round), so the tab is red while the toast waits for it.
+  // save), so the tab is red while the toast waits for it.
   if (session.status !== 'cancelled') {
-    sbp('dez.model/tabs/markReplyEnded', tabId, session.status === 'error' || failedJobs ? 'error' : 'done')
+    sbp('dez.model/tabs/markReplyEnded', tabId, session.status === 'error' || failed ? 'error' : 'done')
     // Not awaited; it catches its own failures.
     sbp('dez.controller/alertReplyEnded', tabId, session.status)
   }
@@ -741,7 +746,7 @@ function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) 
 // in the generated image folder, then writes its reference, with the model
 // of the reply as its model mark. No answer text comes meanwhile:
 // dez.provider/streamChat waits for this. A failed save leaves the image
-// out, and the reply goes on.
+// out, and the reply goes on; its end makes a tab in the background red.
 async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia, model: ModelRef): Promise<void> {
   let path: string
   try {
@@ -749,6 +754,7 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   } catch {
     // images/save logged the failure and showed its error toast, which
     // waits for the tab.
+    reply.imageSaveFailed = true
     return
   }
 
@@ -819,7 +825,7 @@ async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' |
   const jobs = reply.jobs
   const unread = jobs?.tabJobs.hasOpen ? await settleJobs(tabId, reply, jobs) : []
   if (unread === null) return false
-  finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId), { failedJobs: unread.length > 0 })
+  finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId), { failed: unread.length > 0 || reply.imageSaveFailed })
   if (unread.length > 0) {
     for (const job of unread) console.error(`The ${job.tool} job ${job.id} ${job.status}, and the model did not get its result:`, job.text)
     showReplyError(tabId, unread.length === 1 ? 'Job failed' : `${unread.length} jobs failed`, unreadJobsMessage(unread))
@@ -1587,6 +1593,7 @@ export default sbp('sbp/selectors/register', {
       jobs: null,
       imageBytes: null,
       mediaJobId: null,
+      imageSaveFailed: false,
     }
     repliesByTab.set(args.tabId, reply)
 

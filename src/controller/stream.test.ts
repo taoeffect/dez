@@ -2727,6 +2727,25 @@ describe('dez.stream/start images of a chat reply', () => {
     expect(deletedImages).toStrictEqual([])
   })
 
+  // The toast of images/save waits for the tab, so the tab must be red.
+  it('marks a tab in the background error when its reply finishes with an image that it could not save', async () => {
+    const tabId = activeTab().id
+    saveImage = async () => {
+      throw new Error('Disk full')
+    }
+    streamChat = async (input) => {
+      sbp('dez.model/tabs/create')
+      await input.onImage(png)
+      await input.onToken('Answer.')
+      return { requestId: input.requestId as string }
+    }
+
+    await startStream()
+
+    expect(sbp('dez.model/tabs/activity')).toStrictEqual({ [tabId]: 'error' })
+    expect(alerts).toStrictEqual([{ tabId, status: 'finished' }])
+  })
+
   it.each([
     ['the user stops the reply', () => sbp('dez.stream/stop', activeTab().id)],
     ['the user merges the section into the one before', () => sbp('dez.model/tabs/replaceSections', activeTab().id, activeTab().sections.slice(0, -1))],
