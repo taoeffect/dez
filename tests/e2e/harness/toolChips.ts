@@ -285,12 +285,18 @@ export async function sendCopyToPanelField (browser: E2EBrowser, index: number, 
 
 /** Where one parameter row of a panel draws its value: `offset`, how far
  *  the first line of the value is below the top of the name, in px (to
- *  0.1 px), and `lines`, the height of the text of the value in lines of
- *  the name (to 0.1 line). */
+ *  0.1 px); `lines`, the height of the text of the value in lines of the
+ *  name, to the nearest whole line; and `scrolls`, whether the field of the
+ *  value is shorter than its text, so that it scrolls. `lines` is a whole
+ *  number because WebKitGTK 2.52 draws each line of a text at a whole px
+ *  (18 px for a line height of 18.75 px): there, three lines measure 2.88
+ *  lines of the computed line height. A field that cuts its text shows in
+ *  `scrolls`, not in `lines`. */
 export interface ParameterRowPlace {
   name: string
   offset: number
   lines: number
+  scrolls: boolean
 }
 
 /** The place of each parameter row of the open panel of the chip `index`
@@ -317,7 +323,8 @@ export async function parameterRowPlaces (browser: E2EBrowser, index: number): P
         return {
           name: name.textContent ?? '',
           offset: Math.round((top - name.getBoundingClientRect().top) * 10) / 10,
-          lines: Math.round(height / line * 10) / 10,
+          lines: Math.round(height / line),
+          scrolls: text.scrollHeight > text.clientHeight,
         }
       }))
     }))

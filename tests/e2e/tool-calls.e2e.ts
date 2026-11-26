@@ -905,10 +905,10 @@ describe('tool calls', () => {
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'open panels', async () => [await toolPanel(browser, 0), await toolPanel(browser, 1)].every((shown) => shown !== null), true)
 
-    const rows = async (index: number): Promise<Array<{ name: string, onNameLine: boolean, lines: number }> | undefined> =>
-      (await parameterRowPlaces(browser, index))?.map(({ name, offset, lines }) => ({ name, onNameLine: Math.abs(offset) <= 1, lines }))
-    expect(await rows(0)).toStrictEqual([{ name: 'model', onNameLine: true, lines: 1 }, { name: 'prompt', onNameLine: true, lines: 3 }, { name: 'timeout_seconds', onNameLine: true, lines: 1 }])
-    expect(await rows(1)).toStrictEqual([{ name: 'filter', onNameLine: true, lines: 1 }])
+    const rows = async (index: number): Promise<Array<{ name: string, onNameLine: boolean, lines: number, scrolls: boolean }> | undefined> =>
+      (await parameterRowPlaces(browser, index))?.map(({ name, offset, lines, scrolls }) => ({ name, onNameLine: Math.abs(offset) <= 1, lines, scrolls }))
+    expect(await rows(0)).toStrictEqual([{ name: 'model', onNameLine: true, lines: 1, scrolls: false }, { name: 'prompt', onNameLine: true, lines: 3, scrolls: false }, { name: 'timeout_seconds', onNameLine: true, lines: 1, scrolls: false }])
+    expect(await rows(1)).toStrictEqual([{ name: 'filter', onNameLine: true, lines: 1, scrolls: false }])
     expect(await misplacedLines(browser)).toStrictEqual([])
   })
 
