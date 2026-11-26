@@ -293,7 +293,8 @@ function onOverlayClick(event: MouseEvent) {
               conversation starts with one Agent message: first two chips, then the reply, which
               goes on under the chips. Click the summary chip to read the notes and the messages of
               yours that they keep, and the assets chip to see the assets that the compaction kept.
-              You cannot edit the notes, and Backspace and the other delete keys do not delete them.
+              You can select and copy the notes, but you cannot edit them, and Backspace and the
+              other delete keys do not delete them.
               A compaction cannot be undone: Undo does not bring the earlier text back. After a
               compaction, the bottom bar
               shows two sizes and two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>:

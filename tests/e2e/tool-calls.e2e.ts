@@ -2,12 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import type { LiveTimes } from '../../src/model/streams/types'
 import { jobsWaitResults } from '../../src/model/tools/jobs'
 import { unknownToolText } from '../../src/model/tools/registry'
 import { longDuration, longLiveDuration, shortDuration } from '../../src/utils/durationText'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, referencePath, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
@@ -16,8 +17,8 @@ import { evalCall, withoutRunTime } from './harness/jsEval'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, toolResultTime, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabId, activeTabStreaming, busyDotsShown, docPos, editorCaret, editorDoc, endedReply, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
-import { modelListBlock, pressToolChip, toolChipTimes, toolChips, toolPanel, type ToolChipTimeView, type ToolChipView } from './harness/toolChips'
+import { activeConversationId, activeTabId, activeTabStreaming, busyDotsShown, docPos, editorCaret, editorDoc, editorSelection, endedReply, focusEditor, focusedArea, misplacedLines, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { modelListBlock, panelField, panelFieldWordPoint, parameterFieldName, parameterRowPlaces, pressToolChip, sendCopyToPanelField, toolChipTimes, toolChips, toolPanel, type ToolChipTimeView, type ToolChipView, type ToolPanelView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -44,7 +45,9 @@ import { modelListBlock, pressToolChip, toolChipTimes, toolChips, toolPanel, typ
 // an error that tells that length. A block
 // of a tool that Dez does not have shows as an old/unrecognized tool chip,
 // and goes back with its result. A long result scrolls in its field under
-// the wheel. Backspace and Delete next to a chip never join its block to
+// the wheel. The user selects and copies a parameter value in the panel,
+// but cannot change it, and each value shows whole, on the line of its
+// name. Backspace and Delete next to a chip never join its block to
 // other text. Chips that follow each other are close together, with or
 // without a blank line between them in the text, and a chip is as far from
 // text on the next line as from text after a blank line; a blank line
@@ -856,6 +859,57 @@ describe('tool calls', () => {
     await browser.action('wheel').scroll({ x: field.x, y: field.y, deltaY: 300 }).perform()
     await waitForValue(browser, 'result field scrolled', async () => (await scrollTops()).field > 0, true)
     expect((await scrollTops()).doc).toBe(before.doc)
+  })
+
+  // Each parameter value is a read-only field, as the result: the user
+  // selects and copies a value, a text or the JSON text of any other value,
+  // with the mouse and with Select All, and cannot change it. The press and
+  // the keys stay in the field: the caret of the editor stays.
+  it('selects and copies a parameter value, and keeps it as it is', async () => {
+    const prompt = 'A red fox sleeps in the snow.\nThe sky is pink at dawn.'
+    const block = toolBlockText({ id: 'call_values', name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, timeout_seconds: 300 }, result: 'The fox is drawn.' })
+    const sections: Array<{ role: 'user' | 'agent', text: string }> = [{ role: 'user', text: 'Draw a fox.' }, { role: 'agent', text: block }, { role: 'user', text: '' }]
+    await openSeededConversation(browser, setup.app.home, 'parameter-values', sections)
+    const panel: ToolPanelView = { parameters: [['model', 'studio/paint'], ['prompt', prompt], ['timeout_seconds', '300']], result: 'The fox is drawn.', failed: false }
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'open panel', () => toolPanel(browser, 0), panel)
+    const selection = await editorSelection(browser)
+    const promptField = parameterFieldName('prompt')
+
+    await pointerClickAt(browser, await panelFieldWordPoint(browser, 0, promptField, 'sleeps'), 2)
+    expect(await panelField(browser, 0, promptField)).toStrictEqual({ text: prompt, selected: 'sleeps', focused: true })
+    await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')
+    expect(await panelField(browser, 0, promptField)).toStrictEqual({ text: prompt, selected: prompt, focused: true })
+    expect(await sendCopyToPanelField(browser, 0, promptField)).toStrictEqual({ canceled: false, text: '' })
+    await typeKeys(browser, 'wolf')
+    await browser.keys([Key.Backspace])
+    expect(await panelField(browser, 0, promptField)).toStrictEqual({ text: prompt, selected: prompt, focused: true })
+
+    const timeoutField = parameterFieldName('timeout_seconds')
+    await pointerClickAt(browser, await panelFieldWordPoint(browser, 0, timeoutField, '300'), 2)
+    expect(await panelField(browser, 0, timeoutField)).toStrictEqual({ text: '300', selected: '300', focused: true })
+    expect(await toolPanel(browser, 0)).toStrictEqual(panel)
+    expect(await threadSections(browser)).toStrictEqual(sections)
+    expect(await editorSelection(browser)).toStrictEqual(selection)
+  })
+
+  // A value keeps the look of a plain text row: its first line on the line
+  // of its name, and the whole value, with no scroll of its own, also for a
+  // value of many lines and an empty one.
+  it('shows each parameter value whole, with its first line on the line of its name', async () => {
+    const prompt = 'A red fox sleeps in the snow.\nThe sky is pink at dawn.\nNo people.'
+    const invoke = toolBlockText({ id: 'call_rows', name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, timeout_seconds: 300 }, result: 'The fox is drawn.' })
+    const list = modelListBlock('call_rows_empty', '', 'No model matches.')
+    await openSeededConversation(browser, setup.app.home, 'parameter-rows', [{ role: 'user', text: 'Draw a fox.' }, { role: 'agent', text: `${invoke}\n${list}` }, { role: 'user', text: '' }])
+    await pressToolChip(browser, 0)
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'open panels', async () => [await toolPanel(browser, 0), await toolPanel(browser, 1)].every((shown) => shown !== null), true)
+
+    const rows = async (index: number): Promise<Array<{ name: string, onNameLine: boolean, lines: number }> | undefined> =>
+      (await parameterRowPlaces(browser, index))?.map(({ name, offset, lines }) => ({ name, onNameLine: Math.abs(offset) <= 1, lines }))
+    expect(await rows(0)).toStrictEqual([{ name: 'model', onNameLine: true, lines: 1 }, { name: 'prompt', onNameLine: true, lines: 3 }, { name: 'timeout_seconds', onNameLine: true, lines: 1 }])
+    expect(await rows(1)).toStrictEqual([{ name: 'filter', onNameLine: true, lines: 1 }])
+    expect(await misplacedLines(browser)).toStrictEqual([])
   })
 
   it('keeps each chip on its own lines under Backspace before it, Delete after it, and section merges', async () => {

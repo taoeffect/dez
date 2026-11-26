@@ -1823,8 +1823,8 @@ export const dezTheme = EditorView.theme({
   // padding and wrapping rules for that. The encrypted pill, when there is
   // one, comes after the text. The separator row is uppercase,
   // letter-spaced and not selectable; the panel resets all three. The
-  // result field of a tool call panel (`.dez-tool-call__result`, further
-  // down) shares the field rules.
+  // fields of a tool call panel (`.dez-tool-call__result` and
+  // `.dez-tool-call__parameter-value`, further down) share the field rules.
   '.dez-role-separator[data-thinking-open]': {
     flexWrap: 'wrap',
   },
@@ -1850,11 +1850,12 @@ export const dezTheme = EditorView.theme({
   '.dez-role-separator__thinking:focus-within': {
     borderColor: 'var(--color-link, #4a9eff)',
   },
-  // Both panels are a grid for the mirror path. This rule must come before
-  // the `@supports` block below, which makes them blocks: a later rule of
-  // the same weight would put the grid back, and the result would get the
-  // wrong `field-sizing` height and could not scroll.
-  '.dez-role-separator__thinking, .dez-tool-call__result': {
+  // The panels and the boxes of the fields are a grid for the mirror path.
+  // This rule must come before the `@supports` block below, which makes
+  // them blocks: a later rule of the same weight would put the grid back,
+  // and the result would get the wrong `field-sizing` height and could not
+  // scroll.
+  '.dez-role-separator__thinking, .dez-tool-call__result, .dez-tool-call__parameter-value': {
     display: 'grid',
   },
   // CM's `hideNativeSelection` paints the native selection of a focused
@@ -1925,7 +1926,7 @@ export const dezTheme = EditorView.theme({
   // (WebKitGTK 2.54). `setPanelText` keeps the mirror's text as the record
   // of the shown text on both paths.
   '@supports (field-sizing: content)': {
-    '.dez-role-separator__thinking, .dez-tool-call__result': {
+    '.dez-role-separator__thinking, .dez-tool-call__result, .dez-tool-call__parameter-value': {
       display: 'block',
     },
     '.dez-role-separator__thinking-mirror, .dez-tool-call__result-mirror': {
@@ -2464,7 +2465,7 @@ export const dezTheme = EditorView.theme({
   // under it the panel while open. The chip is quiet, as most calls are not
   // read: no border, a faint fill, muted text, and only the tool name in
   // the text color. The widget is not selectable (WebKitGTK 2.54 reads only
-  // the prefixed `user-select`), except for the result field.
+  // the prefixed `user-select`), except for the fields of its panel.
   '.dez-tool-call': {
     display: 'inline-flex',
     flexDirection: 'column',
@@ -2653,7 +2654,8 @@ export const dezTheme = EditorView.theme({
   // The panel hangs from the disclosure triangle by a thin rule: the
   // parameters as name and value rows, then the result in a read-only
   // field. The field scrolls past about 16 lines. The code of a `js_eval`
-  // call shows in such a field too.
+  // call shows in such a field too. Each value is a read-only field as
+  // well, with the look of plain text.
   '.dez-tool-call__panel': {
     display: 'flex',
     flexDirection: 'column',
@@ -2682,10 +2684,26 @@ export const dezTheme = EditorView.theme({
     fontFamily: MONO_FONT_FAMILY,
     fontSize: editorSize(12.5),
   },
+  // A value field has the look of plain text in its row: no border, fill,
+  // padding, height limit, or scroll of its own, so its first line is on
+  // the line of its name and a long value shows whole. The text color is
+  // the one of the value; the row gives the mono font.
   '.dez-tool-call__parameter-value': {
+    minWidth: '0',
     color: 'var(--color-text)',
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
+    cursor: 'auto',
+    userSelect: 'text',
+    WebkitUserSelect: 'text',
+  },
+  '.dez-tool-call__parameter-value > .dez-tool-call__result-mirror, .dez-tool-call__parameter-value > .dez-tool-call__result-text': {
+    padding: '0',
+  },
+  // A value has no border to change, as the result box does when it has
+  // the focus, so a thin ring shows the field that has it.
+  '.dez-tool-call__parameter-value:focus-within': {
+    outline: '1px solid var(--color-link, #4a9eff)',
+    outlineOffset: editorSize(2),
+    borderRadius: editorSize(2),
   },
   '.dez-tool-call__result': {
     alignSelf: 'stretch',

@@ -10,7 +10,6 @@ import { modelDisplayNames } from '../thread/modelChip'
 import { compactionBlockRange } from './compactionBlock'
 import { hiddenAssets, hiddenAssetsOfChips } from './hiddenAssets'
 import { assetModelsChanged, sectionRolesChanged } from './lineBlocks'
-import { isInSelectableTooltip } from './media'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import {
   CHIP_CLASS,
@@ -18,6 +17,7 @@ import {
   NAME_CLASS,
   PANEL_CLASS,
   ROOT_CLASS,
+  cancelChipPress,
   createChip,
   createField,
   createPictures,
@@ -45,7 +45,7 @@ import {
 // - The summary chip: its panel shows every other part of the notes.
 //
 // The notes show as text for people (`compactionNotesParts`), in read-only
-// fields: the user can no longer edit them.
+// fields: the user can select and copy them, but no longer edit them.
 
 /** What the compaction chips of a state show. */
 export interface CompactionChipData {
@@ -277,11 +277,7 @@ class CompactionChipsWidget extends WidgetType {
       renderPartOpenState(view, root, part, this.data, open[part])
     }
     drawnData.set(root, this.data)
-    // As on a tool call chip: a press keeps the caret and the focus where
-    // they are, but in the clock's tooltip of a clip's player.
-    root.addEventListener('mousedown', (event) => {
-      if (!isInSelectableTooltip(event.target)) event.preventDefault()
-    })
+    root.addEventListener('mousedown', cancelChipPress)
     return root
   }
   // A Save or a Delete changes the tag of a clip, and the trash takes an
@@ -312,7 +308,8 @@ class CompactionChipsWidget extends WidgetType {
     destroyPanelPlayers(dom)
   }
   // The widget takes its own events (the chips' presses and keys, the
-  // controls of an asset); CM leaves them all alone.
+  // selection, select all, and copy of a notes field, the controls of an
+  // asset); CM leaves them all alone.
   ignoreEvent(): boolean {
     return true
   }

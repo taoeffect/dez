@@ -43,8 +43,10 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // call to a tool that Dez does not have says so before the name, with no
 // short form (`UNRECOGNIZED_TOOL_TEXT`). A click on the chip, or Enter or
 // Space while it has the focus, opens a panel under it with the parameters,
-// the result, and the pictures that the call showed its model. The block's
-// text stays in the doc as it is: the chip only hides it.
+// the result, and the pictures that the call showed its model. The texts of
+// the panel (each parameter value, the result) are read-only fields: the
+// user can select and copy them, but not edit them. The block's text stays
+// in the doc as it is: the chip only hides it.
 //
 // The panel of a `js_eval` call shows its code in a field of its own, and
 // after the result the tool calls that the code made (`BridgedCalls`),
@@ -690,9 +692,11 @@ function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
  *  text without script measuring, and its box scrolls past its max height.
  *  The CSS shares the thinking field's rules in `dezTheme`. A text field
  *  gives native selection, select all, and copy of the text. `label` is the
- *  field's accessible name, and `placeholder` shows for a blank text. */
-export function createField(text: string, label: string, placeholder: string): HTMLElement {
-  const box = span(RESULT_CLASS)
+ *  field's accessible name, and `placeholder` shows for a blank text.
+ *  `boxClass` gives the box its look: the bordered box of a result, or
+ *  the plain text of a parameter value (`createParameters`). */
+export function createField(text: string, label: string, placeholder: string, boxClass = RESULT_CLASS): HTMLElement {
+  const box = span(boxClass)
   const mirror = span('dez-tool-call__result-mirror', text)
   mirror.setAttribute('aria-hidden', 'true')
   const field = document.createElement('textarea')
@@ -705,6 +709,17 @@ export function createField(text: string, label: string, placeholder: string): H
   field.setAttribute('aria-label', label)
   box.append(mirror, field)
   return box
+}
+
+/** The press rule of the chip widgets (a tool call, the compaction chips):
+ *  a press keeps the caret and the focus where they are, as a press on a
+ *  role pill does, so the caret never goes onto the line of a chip by the
+ *  mouse. Only a press in a text that the user can select keeps its
+ *  default: a text field of a panel (`createField`), and the clock's
+ *  tooltip of the player of a clip. */
+export function cancelChipPress(event: MouseEvent): void {
+  const inField = event.target instanceof Element && event.target.closest(`.${RESULT_TEXT_CLASS}`) !== null
+  if (!inField && !isInSelectableTooltip(event.target)) event.preventDefault()
 }
 
 /** The key of a hidden asset among the assets of one chip: an image's path
@@ -939,11 +954,14 @@ export function createPictures(view: EditorView, pictures: readonly ShownPicture
 }
 
 // The rows of the arguments `parameters` of a call: each name, then its
-// value, a text as it is and any other value as its JSON text.
+// value, a text as it is and any other value as its JSON text. A value is
+// a read-only field with the look of plain text, so the user can select
+// and copy it (but not edit it); a name is not selectable.
 function createParameters(parameters: readonly [string, ToolArgumentValue][]): HTMLElement {
   const rows = span('dez-tool-call__parameters')
   for (const [name, value] of parameters) {
-    rows.append(span('dez-tool-call__parameter-name', name), span('dez-tool-call__parameter-value', typeof value === 'string' ? value : JSON.stringify(value)))
+    const valueText = typeof value === 'string' ? value : JSON.stringify(value)
+    rows.append(span('dez-tool-call__parameter-name', name), createField(valueText, `Parameter ${name}`, '', 'dez-tool-call__parameter-value'))
   }
   return rows
 }
@@ -1060,15 +1078,7 @@ class ToolCallWidget extends WidgetType {
     root.appendChild(createCallChip(view, this.call))
     renderCallOpenState(view, root, this.call, openToolCalls(view.state).has(this.call.id))
     drawnCalls.set(root, this.call)
-    // A press anywhere on the widget keeps the caret and the focus where
-    // they are, as a press on a role pill does: the caret never goes onto
-    // the chip's line by the mouse. The two texts of the widget that the
-    // user can select keep the default: a text field of the panel, and the
-    // clock's tooltip of a hidden clip's player.
-    root.addEventListener('mousedown', (event) => {
-      const inField = event.target instanceof Element && event.target.closest(`.${RESULT_TEXT_CLASS}`) !== null
-      if (!inField && !isInSelectableTooltip(event.target)) event.preventDefault()
-    })
+    root.addEventListener('mousedown', cancelChipPress)
     return root
   }
   // Two parts of a call change while its chip is drawn. Its hidden assets:
@@ -1096,8 +1106,9 @@ class ToolCallWidget extends WidgetType {
     destroyPanelPlayers(dom)
   }
   // The widget takes its own events (the chip's press and keys, the
-  // selection, select all, and copy of a text field, the controls of a
-  // hidden asset); CM leaves them all alone.
+  // selection, select all, and copy of a text field: the code, a parameter
+  // value, the result; the controls of a hidden asset); CM leaves them all
+  // alone.
   ignoreEvent(): boolean {
     return true
   }

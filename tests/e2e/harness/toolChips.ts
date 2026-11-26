@@ -5,8 +5,10 @@ import { assetPartPoint } from './thread'
 
 // What the tool call chips of the active editor show
 // (src/view/editor/toolCalls.ts), read from the page, and what a spec
-// expects of them; a press on a chip; and the text of a call block that a
-// seeded conversation holds.
+// expects of them; a press on a chip; the read-only text fields of an
+// open panel (the compaction chips have them too: a press on a word, the
+// selection, a copy, the place of the parameter rows); and the text of a
+// call block that a seeded conversation holds.
 
 /** What one tool call chip in the editor shows. */
 export interface ToolChipView {
@@ -82,17 +84,17 @@ export interface ToolPanelView {
 }
 
 /** The panel of the chip `index` (doc order); null while it is closed. The
- *  result field is found by its name, and the parameter rows as the ones
- *  of the panel itself: the panel of an intermediate call can hold a
- *  second field, before it (`hiddenPart`), and the panel of a `js_eval`
- *  call the rows and the fields of the tool calls of its code
- *  (`codePanel`). */
+ *  result field is found by its name, the value of each parameter row is
+ *  the text of its field, and the parameter rows are the ones of the panel
+ *  itself: the panel of an intermediate call can hold a second field,
+ *  before it (`hiddenPart`), and the panel of a `js_eval` call the rows
+ *  and the fields of the tool calls of its code (`codePanel`). */
 export async function toolPanel (browser: E2EBrowser, index: number): Promise<ToolPanelView | null> {
   return browser.execute((chipIndex: number) => {
     const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
     if (!panel) return null
     const names = Array.from(panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
-    const values = Array.from(panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
+    const values = Array.from(panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-value'), (value) => value.querySelector('textarea')?.value ?? '')
     const result = panel.querySelector<HTMLTextAreaElement>('textarea[aria-label="Result"]')
     return {
       parameters: names.map((name, at): [string, string] => [name, values[at] ?? '']),
@@ -133,7 +135,9 @@ export interface CodePanelView {
 }
 
 /** The code part and the tool calls of the code in the panel of the chip
- *  `index` (doc order); null while the panel is closed. */
+ *  `index` (doc order); null while the panel is closed. The result field of
+ *  a tool call of the code is found by its name, as each of its parameter
+ *  values is a field too. */
 export async function codePanel (browser: E2EBrowser, index: number): Promise<CodePanelView | null> {
   return browser.execute((chipIndex: number) => {
     const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
@@ -143,8 +147,8 @@ export async function codePanel (browser: E2EBrowser, index: number): Promise<Co
       code: panel.querySelector<HTMLTextAreaElement>('textarea[aria-label="Code"]')?.value ?? null,
       calls: Array.from(panel.querySelectorAll<HTMLElement>('.dez-tool-call__bridged-call'), (call) => {
         const names = Array.from(call.querySelectorAll('.dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
-        const values = Array.from(call.querySelectorAll('.dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
-        const result = call.querySelector<HTMLTextAreaElement>('textarea')
+        const values = Array.from(call.querySelectorAll('.dez-tool-call__parameter-value'), (value) => value.querySelector('textarea')?.value ?? '')
+        const result = call.querySelector<HTMLTextAreaElement>('textarea[aria-label^="Result of tool call"]')
         return {
           name: call.querySelector('.dez-tool-call__bridged-name')?.textContent ?? '',
           status: call.dataset.status ?? null,
@@ -183,6 +187,130 @@ export async function toolPanelPictures (browser: E2EBrowser, index: number): Pr
       }
     })
   }, index)
+}
+
+/** What a read-only text field of an open panel shows: its text, the part
+ *  of it that is selected, and whether it has the focus. */
+export interface PanelFieldView {
+  text: string
+  selected: string
+  focused: boolean
+}
+
+/** The accessible name of the field of the value of the parameter `name`
+ *  in a panel. */
+export function parameterFieldName (name: string): string {
+  return `Parameter ${name}`
+}
+
+/** The text field whose accessible name is `name` in the open panel of the
+ *  chip `index` (doc order); null when the panel is closed or has no such
+ *  field. */
+export async function panelField (browser: E2EBrowser, index: number, name: string): Promise<PanelFieldView | null> {
+  return browser.execute((chipIndex: number, fieldName: string) => {
+    const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
+    const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+    if (!field) return null
+    return { text: field.value, selected: field.value.slice(field.selectionStart, field.selectionEnd), focused: document.activeElement === field }
+  }, index, name)
+}
+
+/** The viewport point at the middle of the first `word` of the text field
+ *  named `name` (`panelField`), read two frames after the last change, when
+ *  CodeMirror has placed the lines. A text field gives no box of a part of
+ *  its text, so a hidden copy of the field, with its text and its computed
+ *  style at its place, gives the box of the word. The word must be in
+ *  view. */
+export async function panelFieldWordPoint (browser: E2EBrowser, index: number, name: string, word: string): Promise<Point> {
+  return browser.execute((chipIndex: number, fieldName: string, wanted: string) => new Promise<Point>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
+      const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+      const at = field?.value.indexOf(wanted) ?? -1
+      if (!field || at < 0) {
+        reject(new Error(`panelFieldWordPoint: no field "${fieldName}" with "${wanted}" in chip ${chipIndex}`))
+        return
+      }
+      const style = getComputedStyle(field)
+      const box = field.getBoundingClientRect()
+      const copy = document.createElement('div')
+      for (let i = 0; i < style.length; i++) copy.style.setProperty(style[i], style.getPropertyValue(style[i]))
+      Object.assign(copy.style, { position: 'fixed', left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: 'auto', margin: '0', overflow: 'visible', visibility: 'hidden', pointerEvents: 'none' })
+      const text = document.createTextNode(field.value)
+      copy.appendChild(text)
+      document.body.appendChild(copy)
+      const range = document.createRange()
+      range.setStart(text, at)
+      range.setEnd(text, at + wanted.length)
+      const rect = range.getClientRects()[0]
+      copy.remove()
+      const point = { x: rect.left + rect.width / 2 - field.scrollLeft, y: rect.top + rect.height / 2 - field.scrollTop }
+      if (point.x < 0 || point.y < 0 || point.x > window.innerWidth || point.y > window.innerHeight) {
+        reject(new Error(`panelFieldWordPoint: "${wanted}" of the field "${fieldName}" is out of view`))
+        return
+      }
+      resolve(point)
+    }))
+  }), index, name, word)
+}
+
+/** Sends the text field named `name` (`panelField`) a `copy` event with a
+ *  `DataTransfer` of its own, as a copy key there sends one, and gives
+ *  whether a handler canceled it and the text that a handler put in.
+ *  WebDriver cannot read the system clipboard, and a script cannot start
+ *  the field's own copy: an event that no handler takes is the sign that
+ *  the field's own copy runs. */
+export async function sendCopyToPanelField (browser: E2EBrowser, index: number, name: string): Promise<{ canceled: boolean, text: string }> {
+  return browser.execute((chipIndex: number, fieldName: string) => {
+    const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
+    const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+    if (!field) throw new Error(`sendCopyToPanelField: no field "${fieldName}" in chip ${chipIndex}`)
+    const data = new DataTransfer()
+    const event = new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true })
+    field.dispatchEvent(event)
+    return { canceled: event.defaultPrevented, text: data.getData('text/plain') }
+  }, index, name)
+}
+
+/** Where one parameter row of a panel draws its value: `offset`, how far
+ *  the first line of the value is below the top of the name, in px (to
+ *  0.1 px), and `lines`, the height of the text of the value in lines of
+ *  the name (to 0.1 line). */
+export interface ParameterRowPlace {
+  name: string
+  offset: number
+  lines: number
+}
+
+/** The place of each parameter row of the open panel of the chip `index`
+ *  (doc order), the rows of the panel itself (`toolPanel`), read two
+ *  frames after the last change; null while the panel is closed. */
+export async function parameterRowPlaces (browser: E2EBrowser, index: number): Promise<ParameterRowPlace[] | null> {
+  return browser.execute((chipIndex: number) => new Promise<ParameterRowPlace[] | null>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
+      if (!panel) {
+        resolve(null)
+        return
+      }
+      const names = panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-name')
+      const values = panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-value')
+      resolve(Array.from(names, (name, at) => {
+        const text = values[at].querySelector('textarea') ?? values[at]
+        const style = getComputedStyle(text)
+        const box = text.getBoundingClientRect()
+        const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
+        const height = box.height - parseFloat(style.borderTopWidth) - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - parseFloat(style.borderBottomWidth)
+        // The grid stretches a name to the height of its row.
+        const line = parseFloat(getComputedStyle(name).lineHeight)
+        return {
+          name: name.textContent ?? '',
+          offset: Math.round((top - name.getBoundingClientRect().top) * 10) / 10,
+          lines: Math.round(height / line * 10) / 10,
+        }
+      }))
+    }))
+  }), index)
 }
 
 /** Presses the chip `index` (doc order), which opens or closes its panel.

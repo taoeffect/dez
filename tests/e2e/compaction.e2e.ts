@@ -22,8 +22,8 @@ import { assetInView, flashedAssets, pressMention, recordFlashes } from './harne
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, mockModelKey, openAiToolCall, replyText, requestMessages, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
-import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
+import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, editorSelection, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { hiddenAssetNotes, hiddenPart, panelField, panelFieldWordPoint, pressToolChip, sendCopyToPanelField, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
 // process.
@@ -39,10 +39,12 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   closed.
 // - The notes are no text of the editor: the panel of the summary chip
 //   shows them in a read-only field, and Find does not match them. The
-//   caret never goes into the block. Backspace after it keeps the block,
-//   as the text after the block is the reply. Only a selection that holds
-//   the block deletes it, which makes the first section a user section;
-//   an undo brings the block back.
+//   user can select and copy the notes of both chips there, but not edit
+//   them, and the caret of the editor stays where it is. The caret never
+//   goes into the block. Backspace after it keeps the block, as the text
+//   after the block is the reply. Only a selection that holds the block
+//   deletes it, which makes the first section a user section; an undo
+//   brings the block back.
 // - Each request starts with one user message: the notes, the pictures of
 //   the tag, and the user messages right after the notes, with their
 //   images. That message is the same in every later request.
@@ -106,6 +108,10 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const THINKER: MockProvider = { id: 'thinker', name: 'Thinker Mock', modelId: 'think-model', modelName: 'Think Model' }
 const MODEL_KEY = mockModelKey(PROVIDER)
 const CHAT_PATH = mockChatPath(PROVIDER)
+// The accessible names of the fields of the notes in the panels of the
+// summary chip and of the assets chip.
+const SUMMARY_FIELD = 'Compaction summary'
+const ASSETS_NOTES_FIELD = 'What each asset is'
 
 // The first line of the instruction of a compaction request.
 const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', apps: [], jobs: [], cost: undefined, tools: false }).split('\n')[0]
@@ -787,6 +793,37 @@ describe('a compacted conversation', () => {
     expect(await browser.execute(() => Array.from(document.querySelectorAll('.dez-find-match'), (match) => match.textContent ?? ''))).toStrictEqual(['fox'])
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'find closed', () => findDropdownOpen(browser), false)
+  })
+
+  // The notes of both chips can be selected and copied, as each text of a
+  // panel, with the mouse and with Select All, but not edited. The press
+  // and the keys stay in the field: the caret of the editor stays.
+  it('selects and copies the notes of both chips, and keeps them as they are', async () => {
+    const notes = ['## Summary', 'The fox is done.', '', '## Assets of the conversation', '@c: a clip of the fox.', '', '## Next steps', 'Make a wolf.'].join('\n')
+    const thread = await openCompacted('compacted-notes-select', [compactionSection(compactionBlockText(PLAIN_DATA, notes)), textSection('user', 'The fox sleeps.')])
+    const summary = '## Summary\nThe fox is done.\n\n## Next steps\nMake a wolf.'
+    const assetsNotes = '@c: a clip of the fox.'
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary', () => chipNotes('summary'), summary)
+    const selection = await editorSelection(browser)
+
+    await pointerClickAt(browser, await panelFieldWordPoint(browser, 1, SUMMARY_FIELD, 'done'), 2)
+    expect(await panelField(browser, 1, SUMMARY_FIELD)).toStrictEqual({ text: summary, selected: 'done', focused: true })
+    await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')
+    expect(await panelField(browser, 1, SUMMARY_FIELD)).toStrictEqual({ text: summary, selected: summary, focused: true })
+    expect(await sendCopyToPanelField(browser, 1, SUMMARY_FIELD)).toStrictEqual({ canceled: false, text: '' })
+    await typeKeys(browser, 'wolf')
+    await browser.keys([Key.Backspace])
+    expect(await panelField(browser, 1, SUMMARY_FIELD)).toStrictEqual({ text: summary, selected: summary, focused: true })
+    expect(await threadSections(browser)).toStrictEqual(thread)
+    expect(await editorSelection(browser)).toStrictEqual(selection)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'assets notes', () => chipNotes('assets'), assetsNotes)
+    await pointerClickAt(browser, await panelFieldWordPoint(browser, 0, ASSETS_NOTES_FIELD, 'clip'), 2)
+    expect(await panelField(browser, 0, ASSETS_NOTES_FIELD)).toStrictEqual({ text: assetsNotes, selected: 'clip', focused: true })
+    expect(await chipNotes('summary')).toBe(summary)
+    expect(await editorSelection(browser)).toStrictEqual(selection)
   })
 
   it('sends a kept image as its text only, and a mention of the user sends the image right after the mention', async () => {
