@@ -32,6 +32,7 @@ import {
   savedPillLines,
   sbpCall,
   threadSections,
+  viewPlace,
 } from './harness/thread'
 
 const MAX_CLICKS = 40
@@ -124,21 +125,10 @@ async function stripScroll (browser: E2EBrowser): Promise<{ max: number, left: n
   })
 }
 
-// The doc line at the top of the editor's view and the caret, read two
-// frames after the last change so that its scroll work is done.
-async function viewPlace (browser: E2EBrowser): Promise<{ topLine: number, caret: number }> {
-  return browser.execute(() => new Promise<{ topLine: number, caret: number }>((resolve, reject) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) {
-        reject(new Error('viewPlace: .cm-content not found'))
-        return
-      }
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      const block = view.lineBlockAtHeight(view.scrollDOM.getBoundingClientRect().top - view.documentTop)
-      resolve({ topLine: view.state.doc.lineAt(block.from).number, caret: view.state.selection.main.head })
-    }))
-  }))
+// The doc line at the top of the editor's view and the caret.
+async function topLineAndCaret (browser: E2EBrowser): Promise<{ topLine: number, caret: number }> {
+  const { line, head } = await viewPlace(browser)
+  return { topLine: line, caret: head }
 }
 
 async function scrollerTop (browser: E2EBrowser): Promise<number> {
@@ -353,7 +343,7 @@ describe('tab bar', () => {
     const docLength = (await editorDoc(browser)).length
     let bottom = { topLine: 0, caret: 0 }
     await waitForValue(browser, 'caret at the doc end', async () => {
-      bottom = await viewPlace(browser)
+      bottom = await topLineAndCaret(browser)
       return bottom.caret
     }, docLength)
     expect(bottom.topLine).toBeGreaterThan(100)
@@ -362,7 +352,7 @@ describe('tab bar', () => {
     await waitForValue(browser, 'new tab active', async () => (await tabStrip(browser)).active, opened.titles.length)
     await click(browser, longTab)
     await waitForValue(browser, 'long tab active', async () => (await tabStrip(browser)).active, opened.active)
-    await waitForValue(browser, 'place after the tab switch', () => viewPlace(browser), bottom)
+    await waitForValue(browser, 'place after the tab switch', () => topLineAndCaret(browser), bottom)
 
     await focusEditor(browser)
     await browser.keys([Key.Control, 'w'])
@@ -376,7 +366,7 @@ describe('tab bar', () => {
       const { active } = await tabStrip(browser)
       return { conversationId: (await conversationIds(browser))[active], active }
     }, { conversationId: id, active: opened.active })
-    await waitForValue(browser, 'place after Ctrl+Shift+T', () => viewPlace(browser), bottom)
+    await waitForValue(browser, 'place after Ctrl+Shift+T', () => topLineAndCaret(browser), bottom)
   })
 
   // A new tab takes the focus, so the user can type in it at once. A press
@@ -434,7 +424,7 @@ describe('tab bar', () => {
     return index
   }
 
-  const scrollAndCaret = async (): Promise<{ top: number, caret: number }> => ({ top: await scrollerTop(browser), caret: (await viewPlace(browser)).caret })
+  const scrollAndCaret = async (): Promise<{ top: number, caret: number }> => ({ top: await scrollerTop(browser), caret: (await topLineAndCaret(browser)).caret })
 
   // In the active tab, which shows its doc start: Page Down, End, Page Up,
   // and Home move the view and the caret of the doc, and the tab strip stays
@@ -445,20 +435,20 @@ describe('tab bar', () => {
 
     await browser.keys([Key.PageDown])
     await waitForValue(browser, 'view and caret moved down by Page Down', async () => {
-      const place = await viewPlace(browser)
+      const place = await topLineAndCaret(browser)
       return place.topLine > 1 && place.caret > 0
     }, true)
     expect(await stripScroll(browser), 'strip after Page Down').toEqual(strip)
 
     await browser.keys([Key.End])
-    await waitForValue(browser, 'caret after End', async () => (await viewPlace(browser)).caret, docLength)
-    const atEnd = await viewPlace(browser)
+    await waitForValue(browser, 'caret after End', async () => (await topLineAndCaret(browser)).caret, docLength)
+    const atEnd = await topLineAndCaret(browser)
     expect(atEnd.topLine).toBeGreaterThan(100)
     expect(await stripScroll(browser), 'strip after End').toEqual(strip)
 
     await browser.keys([Key.PageUp])
     await waitForValue(browser, 'view and caret moved up by Page Up', async () => {
-      const place = await viewPlace(browser)
+      const place = await topLineAndCaret(browser)
       return place.topLine < atEnd.topLine && place.caret < docLength
     }, true)
     expect(await stripScroll(browser), 'strip after Page Up').toEqual(strip)
@@ -489,15 +479,15 @@ describe('tab bar', () => {
     // The key focuses the view of the tab that it leaves before the switch
     // saves that tab's place.
     await browser.keys([Key.PageDown])
-    await waitForValue(browser, 'caret moved by Page Down', async () => (await viewPlace(browser)).caret > 0, true)
-    const middle = await viewPlace(browser)
+    await waitForValue(browser, 'caret moved by Page Down', async () => (await topLineAndCaret(browser)).caret > 0, true)
+    const middle = await topLineAndCaret(browser)
     await blurFocus(browser)
     await browser.keys([Key.Control, Key.Shift, ']'])
     await waitForValue(browser, 'tab after the keys tab active after Ctrl+Shift+]', activeIndex, keysIndex + 1)
     await blurFocus(browser)
     await browser.keys([Key.Control, Key.Shift, '['])
     await waitForValue(browser, 'keys tab active again', activeIndex, keysIndex)
-    await waitForValue(browser, 'keys tab place after the round trip', () => viewPlace(browser), middle)
+    await waitForValue(browser, 'keys tab place after the round trip', () => topLineAndCaret(browser), middle)
 
     await blurFocus(browser)
     await browser.keys([Key.Control, '1'])
@@ -540,11 +530,11 @@ describe('tab bar', () => {
     // The click focuses the view of the tab that it leaves before the
     // switch saves that tab's place.
     await browser.keys([Key.PageDown])
-    await waitForValue(browser, 'caret moved by Page Down', async () => (await viewPlace(browser)).caret > 0, true)
-    const middle = await viewPlace(browser)
+    await waitForValue(browser, 'caret moved by Page Down', async () => (await topLineAndCaret(browser)).caret > 0, true)
+    const middle = await topLineAndCaret(browser)
     await clickTab(clickIndex + 1)
     await clickTab(clickIndex)
-    await waitForValue(browser, 'click tab place after the round trip', () => viewPlace(browser), middle)
+    await waitForValue(browser, 'click tab place after the round trip', () => topLineAndCaret(browser), middle)
 
     await browser.keys([Key.Control, 'f'])
     await waitForValue(browser, 'focus after Ctrl+F', () => focusedArea(browser), 'find')
@@ -803,7 +793,7 @@ describe('tab change that adds a tab', () => {
     const docLength = (await editorDoc(browser)).length
     let bottom = { topLine: 0, caret: 0 }
     await waitForValue(browser, 'caret at the doc end', async () => {
-      bottom = await viewPlace(browser)
+      bottom = await topLineAndCaret(browser)
       return bottom.caret
     }, docLength)
     expect(bottom.topLine).toBeGreaterThan(100)
@@ -812,7 +802,7 @@ describe('tab change that adds a tab', () => {
     const top = { conversationId: LONG_THREAD.id, place: { topLine: 1, caret: 0 }, scrollTop: 0 }
     const longThreadView = async (): Promise<typeof top> => ({
       conversationId: await activeConversationId(browser),
-      place: await viewPlace(browser),
+      place: await topLineAndCaret(browser),
       scrollTop: await scrollerTop(browser),
     })
     await waitForValue(browser, 'long thread at the top', longThreadView, top)

@@ -7,7 +7,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitFo
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { mockChatPath, mockProviderConfig, startChatMock, startEventStream, writeChatFrame, type MockProvider, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, AT_BOTTOM_PX, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabStreaming, AT_BOTTOM_PX, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections, viewPlace, type ViewPlace } from './harness/thread'
 
 // How the thread editor scrolls while a reply streams, driven through the
 // real app against a mock server in this process:
@@ -34,17 +34,6 @@ interface MockState {
   requests: number
   /** The open stream of the latest chat request, until the test ends it. */
   reply: http.ServerResponse | null
-}
-
-/** Where the editor's view is, read two frames after the last change so
- *  that the scroll work of that change is done. */
-interface ScrollView {
-  scrollTop: number
-  /** The distance from the bottom of the view to the bottom of the
-   *  scrollable area. */
-  fromBottom: number
-  /** The number of the doc line at the top of the view. */
-  topLine: number
 }
 
 // Text that is taller than the editor, so the view can scroll.
@@ -94,44 +83,27 @@ describe('stream follow', () => {
     }, text), true)
   }
 
-  async function scrollView (): Promise<ScrollView> {
-    return browser.execute(() => new Promise<ScrollView>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const content = document.querySelector('.cm-content')
-        if (!content) throw new Error('scrollView: .cm-content not found')
-        const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-        const scroll = view.scrollDOM
-        const block = view.lineBlockAtHeight(scroll.getBoundingClientRect().top - view.documentTop)
-        resolve({
-          scrollTop: scroll.scrollTop,
-          fromBottom: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
-          topLine: view.state.doc.lineAt(block.from).number,
-        })
-      }))
-    }))
-  }
-
   // Scrolls the editor so that its view ends `fromBottom` pixels above the
   // bottom, as a wheel or a scrollbar drag does.
-  async function scrollTo (fromBottom: number): Promise<ScrollView> {
+  async function scrollTo (fromBottom: number): Promise<ViewPlace> {
     await browser.execute((distance: number) => {
       const scroll = document.querySelector<HTMLElement>('.cm-scroller')
       if (!scroll) throw new Error('scrollTo: .cm-scroller not found')
       scroll.scrollTop = scroll.scrollHeight - scroll.clientHeight - distance
     }, fromBottom)
-    return scrollView()
+    return viewPlace(browser)
   }
 
   async function expectAtBottom (label: string): Promise<void> {
-    const view = await scrollView()
+    const view = await viewPlace(browser)
     expect(view.fromBottom, `${label}: distance from the bottom`).toBeLessThanOrEqual(AT_BOTTOM_PX)
   }
 
   // The view did not move since `before`, and the reply grew below it.
-  async function expectStayed (label: string, before: ScrollView): Promise<void> {
-    const view = await scrollView()
+  async function expectStayed (label: string, before: ViewPlace): Promise<void> {
+    const view = await viewPlace(browser)
     expect(view.scrollTop, `${label}: scrollTop`).toBe(before.scrollTop)
-    expect(view.topLine, `${label}: top line`).toBe(before.topLine)
+    expect(view.line, `${label}: top line`).toBe(before.line)
     expect(view.fromBottom, `${label}: distance from the bottom`).toBeGreaterThan(before.fromBottom)
   }
 
@@ -208,7 +180,7 @@ describe('stream follow', () => {
       view.dispatch({ selection: { anchor: 0 } })
       view.scrollDOM.scrollTop = 0
     })
-    expect((await scrollView()).scrollTop).toBe(0)
+    expect((await viewPlace(browser)).scrollTop).toBe(0)
     await browser.keys([Key.Control, Key.Enter])
     await waitForReply(1)
 
@@ -243,8 +215,8 @@ describe('stream follow', () => {
 
     endReply()
     await waitForReplyEnd()
-    const ended = await scrollView()
-    expect(ended.topLine, 'top line after the end').toBe(higher.topLine)
+    const ended = await viewPlace(browser)
+    expect(ended.line, 'top line after the end').toBe(higher.line)
     expect(ended.fromBottom, 'distance from the bottom after the end').toBeGreaterThan(AT_BOTTOM_PX)
   })
 
@@ -276,7 +248,7 @@ describe('stream follow', () => {
     await sendAnswer('\nReply 3 line 5')
     await expectStayed('line 5', upAgain)
     await browser.keys([Key.Control, Key.End])
-    await scrollView()
+    await viewPlace(browser)
     await sendAnswer('\nReply 3 line 6')
     await expectAtBottom('line 6')
 
@@ -313,8 +285,8 @@ describe('stream follow', () => {
 
     endReply()
     await waitForReplyEnd()
-    const ended = await scrollView()
-    expect(ended.topLine, 'top line after the end').toBe(scrolled.topLine)
+    const ended = await viewPlace(browser)
+    expect(ended.line, 'top line after the end').toBe(scrolled.line)
     expect(ended.fromBottom, 'distance from the bottom after the end').toBeGreaterThan(AT_BOTTOM_PX)
   })
 
@@ -353,7 +325,7 @@ describe('stream follow', () => {
     await waitForValue(browser, 'other conversation in the editor', async () => (await editorDoc(browser)).startsWith('Other line 1\n'), true)
     await browser.execute(() => (Reflect.get(window, '__e2eReleaseFrames') as () => void)())
 
-    const view = await scrollView()
-    expect([view.scrollTop, view.topLine]).toEqual([0, 1])
+    const view = await viewPlace(browser)
+    expect([view.scrollTop, view.line]).toEqual([0, 1])
   })
 })

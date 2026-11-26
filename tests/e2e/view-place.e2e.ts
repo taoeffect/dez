@@ -7,7 +7,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor,
 import { appFilePath, makeConversation, readAppState, seedAppState, seedConversation, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeConversationId, editorDoc, focusEditor, sbpCall, setCaret } from './harness/thread'
+import { activeConversationId, editorDoc, focusEditor, sbpCall, setCaret, viewPlace, type ViewPlace } from './harness/thread'
 
 // The view place of the active tab after a restart of Dez: the line at the
 // top edge of the view, the px of that edge into its line, and the caret
@@ -31,34 +31,6 @@ function longText (name: string, lines: number): SectionData[] {
   ]
 }
 
-interface Place {
-  /** The doc position of the line block at the top edge of the view. */
-  pos: number
-  /** Px from the top of that block down to the top edge of the view. */
-  offset: number
-  anchor: number
-  head: number
-}
-
-// The place of the view, read two frames after the last change so that its
-// scroll work is done.
-async function livePlace (browser: E2EBrowser): Promise<Place> {
-  return browser.execute(() => new Promise<Place>((resolve, reject) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const content = document.querySelector('.cm-content')
-      if (!content) {
-        reject(new Error('livePlace: .cm-content not found'))
-        return
-      }
-      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-      const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop
-      const block = view.lineBlockAtHeight(top)
-      const { anchor, head } = view.state.selection.main
-      resolve({ pos: block.from, offset: top - block.top, anchor, head })
-    }))
-  }))
-}
-
 // Scrolls the view so that its top edge is `offset` px below the top of the
 // line block at `pos`, as a scroll of the user does: with a wheel event,
 // then a scroll event. The view keeps the place that a start showed until
@@ -76,23 +48,9 @@ async function scrollTo (browser: E2EBrowser, pos: number, offset: number): Prom
 
 // The doc position of the start of the line that starts with `text`.
 async function lineStart (browser: E2EBrowser, text: string): Promise<number> {
-  return browser.execute((wanted: string) => {
-    const content = document.querySelector('.cm-content')
-    if (!content) throw new Error('lineStart: .cm-content not found')
-    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-    const at = view.state.doc.toString().indexOf(`\n${wanted}`)
-    if (at < 0) throw new Error(`lineStart: no line ${wanted}`)
-    return at + 1
-  }, text)
-}
-
-async function docLength (browser: E2EBrowser): Promise<number> {
-  return browser.execute(() => {
-    const content = document.querySelector('.cm-content')
-    if (!content) throw new Error('docLength: .cm-content not found')
-    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-    return view.state.doc.length
-  })
+  const at = (await editorDoc(browser)).indexOf(`\n${text}`)
+  if (at < 0) throw new Error(`lineStart: no line ${text}`)
+  return at + 1
 }
 
 // The height of the line block at `pos`, read two frames after the last
@@ -110,15 +68,6 @@ async function blockHeight (browser: E2EBrowser, pos: number): Promise<number> {
       resolve(view.lineBlockAt(at).height)
     }))
   }), pos)
-}
-
-// Px of the scroller below the bottom edge of the view.
-async function belowView (browser: E2EBrowser): Promise<number> {
-  return browser.execute(() => {
-    const scroller = document.querySelector('.cm-scroller')
-    if (!scroller) throw new Error('belowView: .cm-scroller not found')
-    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-  })
 }
 
 // The place in `app_state.json`, without its offset, which a check reads
@@ -155,12 +104,12 @@ describe('view place after a restart', () => {
   // Scrolls to `offset` px into the line that starts with `line`, puts the
   // caret `caretLine` lines below it, and waits until `app_state.json` holds
   // that place. Gives the place.
-  async function leavePlace (conversationId: string, line: string, offset: number, caretLine: string): Promise<Place> {
+  async function leavePlace (conversationId: string, line: string, offset: number, caretLine: string): Promise<ViewPlace> {
     const b = session()
     await scrollTo(b, await lineStart(b, line), offset)
     const caret = await lineStart(b, caretLine) + 3
     await setCaret(b, caret)
-    const place = await livePlace(b)
+    const place = await viewPlace(b)
     expect(place.offset, 'the top edge is inside a line').toBeGreaterThan(2)
     expect(place).toMatchObject({ anchor: caret, head: caret })
     await waitForValue(b, 'stored place', () => storedPlace(app.home), { conversationId, pos: place.pos, anchor: caret, head: caret })
@@ -170,13 +119,13 @@ describe('view place after a restart', () => {
 
   // After a restart, the view of `conversationId` shows `place`, its offset
   // within 1 px.
-  async function expectPlace (conversationId: string, place: Place): Promise<void> {
+  async function expectPlace (conversationId: string, place: ViewPlace): Promise<void> {
     const b = session()
     await waitForValue(b, 'active conversation', () => activeConversationId(b), conversationId)
     const { pos, anchor, head } = place
     let shown = place
     await waitForValue(b, 'place after the restart', async () => {
-      shown = await livePlace(b)
+      shown = await viewPlace(b)
       return { pos: shown.pos, anchor: shown.anchor, head: shown.head }
     }, { pos, anchor, head })
     expect(Math.abs(shown.offset - place.offset), `offset ${shown.offset}, was ${place.offset}`).toBeLessThanOrEqual(1)
@@ -257,7 +206,7 @@ describe('view place after a restart', () => {
     await scrollTo(b, imageLine, 150)
     const caret = await lineStart(b, 'I line 45') + 2
     await setCaret(b, caret)
-    const place = await livePlace(b)
+    const place = await viewPlace(b)
     expect(place).toMatchObject({ pos: imageLine, anchor: caret, head: caret })
     expect(place.offset).toBeGreaterThan(140)
     await waitForValue(b, 'stored place', () => storedPlace(app.home), { conversationId: 'conv-image', pos: imageLine, anchor: caret, head: caret })
@@ -281,12 +230,12 @@ describe('view place after a restart', () => {
     // The doc of the boot tab, before the start shows the restored tab, has
     // its caret at its end too.
     await waitForValue(b, 'doc of the restored tab', async () => (await editorDoc(b)).includes('Reply.'), true)
-    const length = await docLength(b)
+    const length = (await editorDoc(b)).length
     await waitForValue(b, 'caret at the doc end', async () => {
-      const { anchor, head } = await livePlace(b)
+      const { anchor, head } = await viewPlace(b)
       return { anchor, head }
     }, { anchor: length, head: length })
-    expect(await belowView(b)).toBeLessThanOrEqual(1)
+    expect((await viewPlace(b)).fromBottom).toBeLessThanOrEqual(1)
     await waitForValue(b, 'stored place within the doc', async () => {
       const place = await storedPlace(app.home)
       return place && { anchor: place.anchor, head: place.head }
@@ -301,14 +250,14 @@ describe('view place after a restart', () => {
     const conversationId = await activeConversationId(b)
     await focusEditor(b)
     await b.keys([Key.Control, Key.End])
-    const length = await docLength(b)
-    const place = await livePlace(b)
+    const length = (await editorDoc(b)).length
+    const place = await viewPlace(b)
     expect(place).toMatchObject({ anchor: length, head: length })
     await waitForValue(b, 'stored place', () => storedPlace(app.home), { conversationId, pos: place.pos, anchor: length, head: length })
     expect((await readAppState(app.home))?.viewPlace?.offset).toBeCloseTo(place.offset, 0)
-    const below = await belowView(b)
+    const below = (await viewPlace(b)).fromBottom
     await restart()
     await expectPlace(conversationId, place)
-    expect(Math.abs(await belowView(session()) - below)).toBeLessThanOrEqual(1)
+    expect(Math.abs((await viewPlace(session())).fromBottom - below)).toBeLessThanOrEqual(1)
   })
 })

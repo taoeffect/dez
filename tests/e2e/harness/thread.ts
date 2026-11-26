@@ -322,6 +322,51 @@ export async function editorCaret (browser: E2EBrowser): Promise<number> {
   })
 }
 
+/** Where the active editor's view is. */
+export interface ViewPlace {
+  /** The doc position of the line block at the top edge of the view. */
+  pos: number
+  /** The number of the doc line of that block. */
+  line: number
+  /** Px from the top of that block down to the top edge of the view. */
+  offset: number
+  scrollTop: number
+  /** Px of the scroller below the bottom edge of the view. */
+  fromBottom: number
+  /** The main selection. */
+  anchor: number
+  head: number
+}
+
+/** The place of the active editor's view, read two frames after the last
+ *  change so that the scroll work of that change is done. A spec takes the
+ *  fields that it checks. */
+export async function viewPlace (browser: E2EBrowser): Promise<ViewPlace> {
+  return browser.execute(() => new Promise<ViewPlace>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) {
+        reject(new Error('viewPlace: .cm-content not found'))
+        return
+      }
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const scroll = view.scrollDOM
+      const top = scroll.getBoundingClientRect().top - view.documentTop
+      const block = view.lineBlockAtHeight(top)
+      const { anchor, head } = view.state.selection.main
+      resolve({
+        pos: block.from,
+        line: view.state.doc.lineAt(block.from).number,
+        offset: top - block.top,
+        scrollTop: scroll.scrollTop,
+        fromBottom: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
+        anchor,
+        head,
+      })
+    }))
+  }))
+}
+
 /** The anchor and the head of the active editor's main selection. */
 export async function editorSelection (browser: E2EBrowser): Promise<{ anchor: number, head: number }> {
   return browser.execute(() => {
