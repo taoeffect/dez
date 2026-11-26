@@ -15,6 +15,7 @@ import { clampVolumePercent } from '../volumePercent'
 import type { ClipVolume, ClipVolumes } from '../clipVolume'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
+import { clampModelSettingsSize, type ModelSettingsSize } from '../modelSettingsSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore, type ReplyEnd } from './tabs'
 import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationJobs, ConversationSearchOutcome, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
@@ -69,6 +70,7 @@ export interface SettingsSnapshot {
   favorites: DefaultModel[]
   modelOutputFilter: ModelOutput[]
   modelPickerSize: ModelPickerSize
+  modelSettingsSize: ModelSettingsSize
   providerSettings: Record<string, Record<string, boolean>>
   modelParameters: Record<string, ParameterValues>
   checkForUpdates: boolean
@@ -323,6 +325,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
     modelOutputFilter: [...settings.modelOutputFilter],
     modelPickerSize: { ...settings.modelPickerSize },
+    modelSettingsSize: { ...settings.modelSettingsSize },
     providerSettings: cloneRecords(settings.providerSettings),
     modelParameters: cloneRecords(settings.modelParameters),
     checkForUpdates: settings.checkForUpdates,
@@ -1073,6 +1076,7 @@ export default sbp('sbp/selectors/register', {
         favorites: settings.favorites,
         modelOutputFilter: settings.modelOutputFilter,
         modelPickerSize: settings.modelPickerSize,
+        modelSettingsSize: settings.modelSettingsSize,
         providerSettings: settings.providerSettings,
         modelParameters: settings.modelParameters,
         checkForUpdates: settings.checkForUpdates,
@@ -1297,6 +1301,7 @@ export default sbp('sbp/selectors/register', {
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
       if (Array.isArray(state.modelOutputFilter)) settings.modelOutputFilter = state.modelOutputFilter
       if (state.modelPickerSize) settings.modelPickerSize = state.modelPickerSize
+      if (state.modelSettingsSize) settings.modelSettingsSize = state.modelSettingsSize
       if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (state.modelParameters) settings.modelParameters = state.modelParameters
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
@@ -1337,6 +1342,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.favorites,
         () => settings.modelOutputFilter,
         () => settings.modelPickerSize,
+        () => settings.modelSettingsSize,
         () => settings.providerSettings,
         () => settings.modelParameters,
         () => settings.checkForUpdates,
@@ -1610,15 +1616,22 @@ export default sbp('sbp/selectors/register', {
     useSettingsStore().modelOutputFilter = normalizeOutputs(outputs)
   },
 
-  // The drag of an edge of the bottom bar's model picker calls it once, at
-  // the end of the drag. An unchanged size is not assigned, so a press on a
-  // handle with no move writes no app_state.json.
-  'dez.model/settings/setModelPickerSize' (size: ModelPickerSize): void {
+  // The drag of an edge of a box of the bottom bar calls it once, at the end
+  // of the drag (`view/model-selector/pickerResize.ts`): the model picker,
+  // or the settings panel of the gear. A `maxHeight` of `Infinity` is no
+  // limit, which only the panel takes (`clampModelSettingsSize`). An
+  // unchanged size is not assigned, so a press on a handle with no move
+  // writes no app_state.json.
+  'dez.model/settings/setBoxSize' (box: 'modelPicker' | 'modelSettings', size: { width: number; maxHeight: number }): void {
     const settings = useSettingsStore()
-    const next = clampModelPickerSize(size)
-    const current = settings.modelPickerSize
-    if (current.width === next.width && current.maxHeight === next.maxHeight) return
-    settings.modelPickerSize = next
+    const same = (a: ModelSettingsSize, b: ModelSettingsSize) => a.width === b.width && a.maxHeight === b.maxHeight
+    if (box === 'modelPicker') {
+      const next = clampModelPickerSize(size)
+      if (!same(settings.modelPickerSize, next)) settings.modelPickerSize = next
+    } else {
+      const next = clampModelSettingsSize(size)
+      if (!same(settings.modelSettingsSize, next)) settings.modelSettingsSize = next
+    }
   },
 
   'dez.model/customProviders/list' (): ProviderConfig[] {

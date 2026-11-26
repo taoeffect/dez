@@ -6,6 +6,7 @@ import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ClipVolumes } from '../clipVolume'
 import type { ModelOutput } from '../modelOutputs'
 import type { ModelPickerSize } from '../modelPickerSize'
+import type { ModelSettingsSize } from '../modelSettingsSize'
 import type { ProviderConfig } from '../providers/config'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { PriceQuote } from '../providers/modelPrices'
@@ -200,6 +201,9 @@ export interface AppStatePayload {
   modelOutputFilter?: ModelOutput[]
   // The size of the model picker of the bottom bar (src/model/modelPickerSize.ts).
   modelPickerSize?: ModelPickerSize
+  // The size of the settings panel of the gear next to it
+  // (src/model/modelSettingsSize.ts).
+  modelSettingsSize?: ModelSettingsSize
   providerSettings?: Record<string, Record<string, boolean>>
   // The parameter values that the user chose for media models: full model
   // id (`modelRefKey`) -> parameter name -> value. Only the choices; a

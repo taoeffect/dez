@@ -1,22 +1,30 @@
-import sbp from '@sbp/sbp'
-import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { MODEL_PICKER_SIZE_DEFAULT, type ModelPickerSize } from '../../model/modelPickerSize'
+import { computed, onBeforeUnmount, readonly, ref, watch, type ComputedRef, type Ref } from 'vue'
 
-// The resize of the model picker of the bottom bar (`ModelSelector.vue`): a
-// drag of its top edge, its right edge, or its top right corner. The picker
-// opens up and to the right from the bar's left end, so its bottom left
-// corner stays where it is.
+// The resize of the two boxes that open up from the left end of the bottom
+// bar: the model picker (`ModelSelector.vue`) and the settings panel of the
+// gear (`ProviderSettingsPopup.vue`). A drag of the top edge, the right
+// edge, or the top right corner (`PickerHandles.vue`). Both boxes open up
+// and to the right from the bar's left end, so their bottom left corner
+// stays where it is, and the room of the window is the same for both.
 
 export type PickerEdge = 'top' | 'right' | 'corner'
 
 export const PICKER_EDGES: readonly PickerEdge[] = ['top', 'right', 'corner']
 
-// The picker stays this far from the window's top and right edges. It must
-// be at least the part of a handle that is outside the picker's border, so
-// that no handle leaves the window.
+// A box stays this far from the window's top and right edges. It must be at
+// least the part of a handle that is outside the box's border, so that no
+// handle leaves the window.
 export const PICKER_ROOM_MARGIN_PX = 8
 
-// The largest picker that fits in the window, in whole px.
+// The size of a box, in px: its width, and the limit of its height (a box
+// is as tall as its content, up to the limit). A `maxHeight` of `Infinity`
+// is no limit: then only the room counts.
+export interface BoxSize {
+  width: number
+  maxHeight: number
+}
+
+// The largest box that fits in the window, in whole px.
 export interface PickerRoom {
   width: number
   height: number
@@ -29,50 +37,58 @@ export function pickerRoom(box: Pick<DOMRect, 'left' | 'bottom'>, windowWidth: n
   }
 }
 
-// The size that the picker shows: the user's size, made smaller when the
-// window has no room for it. The stored size does not change, so the picker
+// The size that the box shows: the user's size, made smaller when the
+// window has no room for it. The stored size does not change, so the box
 // gets it back in a larger window.
-export function fitPickerSize(size: ModelPickerSize, room: PickerRoom | null): ModelPickerSize {
+export function fitPickerSize(size: BoxSize, room: PickerRoom | null): BoxSize {
   if (!room) return size
   return { width: Math.min(size.width, room.width), maxHeight: Math.min(size.maxHeight, room.height) }
 }
 
 export interface PickerDragStart {
   edge: PickerEdge
-  // The size of the picker on the screen at the press. It can be smaller
-  // than the stored size: a short list draws a picker shorter than its
-  // height limit, and a small window draws a smaller picker
-  // (`fitPickerSize`). A move that makes a dimension smaller starts from
-  // it, so that the edge moves with the pointer at once.
+  // The size of the box on the screen at the press. It can be smaller than
+  // the stored size: a short list draws a picker shorter than its height
+  // limit, and a small window draws a smaller box (`fitPickerSize`). A move
+  // that makes a dimension smaller starts from it, so that the edge moves
+  // with the pointer at once.
   rendered: { width: number; height: number }
   // The stored size: a dimension that the edge does not move keeps it.
-  size: ModelPickerSize
+  size: BoxSize
   room: PickerRoom
+  // The smallest size that a drag gives, when the room allows it.
+  min: BoxSize
+  // Whether a drag up that reaches the top of the room gives no height
+  // limit (`Infinity`). The settings panel has no limit by default, so this
+  // gives the default back. The picker has a limit by default.
+  noLimitAtRoomTop: boolean
 }
 
 // The size after a move of the pointer by (dx, dy) from the press. Up and
-// to the right make the picker larger. Each dimension that the edge moves
-// is rounded and stays between the minimum (the default size) and the room;
-// when the window is too small for the minimum, the room wins, as in
-// `fitPickerSize`. A move that makes a dimension smaller starts from the
-// drawn picker. A move that makes it larger never lowers the stored size: a
-// short list or a small window stops the edge, and the stored size comes
-// back with a long list or a larger window. A dimension with no move keeps
-// its stored size.
-export function draggedPickerSize(start: PickerDragStart, dx: number, dy: number): ModelPickerSize {
+// to the right make the box larger. Each dimension that the edge moves is
+// rounded and stays between the minimum and the room; when the window is
+// too small for the minimum, the room wins, as in `fitPickerSize`. A move
+// that makes a dimension smaller starts from the drawn box. A move that
+// makes it larger never lowers the stored size: a short list or a small
+// window stops the edge, and the stored size comes back with a long list or
+// a larger window. A dimension with no move keeps its stored size.
+export function draggedPickerSize(start: PickerDragStart, dx: number, dy: number): BoxSize {
   const within = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)))
   const dragged = (drawn: number, stored: number, grow: number, min: number, room: number) => {
     if (grow === 0) return stored
     const size = within(drawn + grow, min, room)
     return grow > 0 ? Math.max(stored, size) : size
   }
+  const height = (): number => {
+    if (start.edge === 'right') return start.size.maxHeight
+    const limit = dragged(start.rendered.height, start.size.maxHeight, -dy, start.min.maxHeight, start.room.height)
+    return start.noLimitAtRoomTop && dy < 0 && limit >= start.room.height ? Infinity : limit
+  }
   return {
     width: start.edge === 'top'
       ? start.size.width
-      : dragged(start.rendered.width, start.size.width, dx, MODEL_PICKER_SIZE_DEFAULT.width, start.room.width),
-    maxHeight: start.edge === 'right'
-      ? start.size.maxHeight
-      : dragged(start.rendered.height, start.size.maxHeight, -dy, MODEL_PICKER_SIZE_DEFAULT.maxHeight, start.room.height),
+      : dragged(start.rendered.width, start.size.width, dx, start.min.width, start.room.width),
+    maxHeight: height(),
   }
 }
 
@@ -83,19 +99,32 @@ interface PickerDrag extends PickerDragStart {
   startY: number
 }
 
-// The drag of a handle of the picker `box` (an element under a `v-if`).
-// `shownSize` is the size to give the box. During a drag a local size
-// drives the box, and the store gets the new size once, at the release.
-// Escape or a close of the picker during a drag ends it with no save.
+export interface BoxResize {
+  storedSize: () => BoxSize
+  min: Readonly<BoxSize>
+  noLimitAtRoomTop?: boolean
+  // Gets the new size once, at the release of a drag that moved.
+  save: (size: BoxSize) => void
+}
+
+// The drag of a handle of the box `box` (an element that a `v-if` can
+// remove). `shownSize` is the size to give the box. During a drag a local
+// size drives the box, and `save` gets the new size once, at the release.
+// Escape or a close of the box during a drag ends it with no save. `room`
+// is the room of the open box, null before its first measure.
 export function usePickerResize(
   box: Readonly<Ref<HTMLElement | null>>,
-  storedSize: () => ModelPickerSize,
-): { shownSize: ComputedRef<ModelPickerSize>; startResize: (edge: PickerEdge, e: PointerEvent) => void } {
+  resize: BoxResize,
+): {
+  shownSize: ComputedRef<BoxSize>
+  room: Readonly<Ref<PickerRoom | null>>
+  startResize: (edge: PickerEdge, e: PointerEvent) => void
+} {
   const room = ref<PickerRoom | null>(null)
-  const dragSize = ref<ModelPickerSize | null>(null)
+  const dragSize = ref<BoxSize | null>(null)
   let drag: PickerDrag | null = null
 
-  const shownSize = computed(() => fitPickerSize(dragSize.value ?? storedSize(), room.value))
+  const shownSize = computed(() => fitPickerSize(dragSize.value ?? resize.storedSize(), room.value))
 
   function measureRoom() {
     room.value = box.value ? pickerRoom(box.value.getBoundingClientRect(), window.innerWidth) : null
@@ -111,8 +140,10 @@ export function usePickerResize(
     drag = {
       edge,
       rendered: { width: rect.width, height: rect.height },
-      size: storedSize(),
+      size: resize.storedSize(),
       room: room.value,
+      min: resize.min,
+      noLimitAtRoomTop: resize.noLimitAtRoomTop ?? false,
       pointerId: e.pointerId,
       handle,
       startX: e.clientX,
@@ -126,7 +157,7 @@ export function usePickerResize(
     // The cursor of the handle for the whole drag, also when the pointer
     // leaves the handle (past the room, or after a fast move): pointer
     // capture does not keep the cursor in every WebKit. The rule is the
-    // global style of `ModelSelector.vue`.
+    // global style of `PickerHandles.vue`.
     document.documentElement.classList.add(`picker-resizing--${edge}`)
   }
 
@@ -164,10 +195,10 @@ export function usePickerResize(
     document.documentElement.classList.remove(`picker-resizing--${state.edge}`)
     const size = dragSize.value
     dragSize.value = null
-    if (save && size) sbp('dez.model/settings/setModelPickerSize', size)
+    if (save && size) resize.save(size)
   }
 
-  // The room follows the window while the picker is open.
+  // The room follows the window while the box is open.
   watch(box, (element) => {
     if (element) {
       measureRoom()
@@ -184,5 +215,5 @@ export function usePickerResize(
     window.removeEventListener('resize', measureRoom)
   })
 
-  return { shownSize, startResize }
+  return { shownSize, room: readonly(room), startResize }
 }

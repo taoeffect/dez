@@ -17,6 +17,7 @@ import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { defaultClipVolumes, type ClipVolumes } from '../clipVolume'
 import { clampVolumePercent } from '../volumePercent'
 import { MODEL_PICKER_SIZE_DEFAULT, clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
+import { MODEL_SETTINGS_SIZE_DEFAULT, clampModelSettingsSize, type ModelSettingsSize } from '../modelSettingsSize'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 import { normalizeOutputs } from '../modelOutputs'
 import { isTextKind, MEDIA_KINDS, type ClipKind, type ImageKind, type MediaKind } from '../providers/types'
@@ -64,6 +65,11 @@ const windowGeometrySchema = z.object({
 const modelPickerSizeSchema = z.object({
   width: z.number(),
   maxHeight: z.number(),
+})
+
+const modelSettingsSizeSchema = z.object({
+  width: z.number(),
+  maxHeight: z.number().nullable(),
 })
 
 const modelRefSchema = z.object({ providerId: z.string(), modelId: z.string() })
@@ -133,6 +139,13 @@ function windowGeometry(value: unknown): WindowGeometry | undefined {
 function modelPickerSize(value: unknown): ModelPickerSize {
   const result = modelPickerSizeSchema.safeParse(value)
   return result.success ? clampModelPickerSize(result.data) : { ...MODEL_PICKER_SIZE_DEFAULT }
+}
+
+// The same rule for the settings panel of the gear; a `maxHeight` of null
+// is no limit.
+function modelSettingsSize(value: unknown): ModelSettingsSize {
+  const result = modelSettingsSizeSchema.safeParse(value)
+  return result.success ? clampModelSettingsSize(result.data) : { ...MODEL_SETTINGS_SIZE_DEFAULT }
 }
 
 function tabData(value: unknown): TabData | null {
@@ -308,6 +321,7 @@ export function defaultAppState(): AppStatePayload {
     favorites: [],
     modelOutputFilter: [],
     modelPickerSize: { ...MODEL_PICKER_SIZE_DEFAULT },
+    modelSettingsSize: { ...MODEL_SETTINGS_SIZE_DEFAULT },
     providerSettings: {},
     modelParameters: {},
     checkForUpdates: true,
@@ -358,6 +372,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
         ? normalizeOutputs(parsed.modelOutputFilter)
         : fallback.modelOutputFilter,
       modelPickerSize: modelPickerSize(parsed.modelPickerSize),
+      modelSettingsSize: modelSettingsSize(parsed.modelSettingsSize),
       providerSettings: providerSettings(parsed.providerSettings),
       modelParameters: modelParameters(parsed.modelParameters),
       checkForUpdates: typeof parsed.checkForUpdates === 'boolean'

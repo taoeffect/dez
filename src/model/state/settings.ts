@@ -7,6 +7,7 @@ import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
 import { defaultClipVolumes, type ClipVolumes } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT, type ModelPickerSize } from '../modelPickerSize'
+import { MODEL_SETTINGS_SIZE_DEFAULT, type ModelSettingsSize } from '../modelSettingsSize'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
 export type Theme = 'light' | 'dark' | 'system'
@@ -50,6 +51,8 @@ export const useSettingsStore = defineStore('settings', () => {
   // The size of the model picker of the bottom bar (only that picker; the
   // one of Settings has a fixed size).
   const modelPickerSize = ref<ModelPickerSize>({ ...MODEL_PICKER_SIZE_DEFAULT })
+  // The size of the settings panel of the gear next to that picker.
+  const modelSettingsSize = ref<ModelSettingsSize>({ ...MODEL_SETTINGS_SIZE_DEFAULT })
   // Sparse per-provider setting overrides keyed by provider id then setting
   // key; effective value = stored value ?? provider descriptor default.
   const providerSettings = ref<Record<string, Record<string, boolean>>>({})
@@ -135,6 +138,7 @@ export const useSettingsStore = defineStore('settings', () => {
     favorites,
     modelOutputFilter,
     modelPickerSize,
+    modelSettingsSize,
     providerSettings,
     modelParameters,
     checkForUpdates,

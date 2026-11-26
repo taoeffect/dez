@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { modelRefKey } from '../../model/chat/modelRef'
@@ -18,9 +18,36 @@ import {
 import { toggleRows, toggleValue } from '../../model/providers/modelToggles'
 import { TOOLS_SETTING_KEY } from '../../model/providers/toolsSetting'
 import { requestParts } from '../../model/chat/incognito'
+import { MODEL_SETTINGS_MIN_HEIGHT, MODEL_SETTINGS_SIZE_DEFAULT } from '../../model/modelSettingsSize'
+import PickerHandles from './PickerHandles.vue'
 import ProviderSettingsSwitch from './ProviderSettingsSwitch.vue'
+import { usePickerResize } from './pickerResize'
 
 const { activeModel, activeTabIncognito, settings } = useModelState()
+
+// The user's size of the panel (`pickerResize.ts`), one for every model. A
+// stored `maxHeight` of null is no limit, which the drag code reads as
+// `Infinity`: then the panel is as tall as the room of the window allows.
+const panel = ref<HTMLElement | null>(null)
+const { shownSize, room, startResize } = usePickerResize(panel, {
+  storedSize: () => {
+    const size = settings.value.modelSettingsSize
+    return { width: size.width, maxHeight: size.maxHeight ?? Infinity }
+  },
+  min: { width: MODEL_SETTINGS_SIZE_DEFAULT.width, maxHeight: MODEL_SETTINGS_MIN_HEIGHT },
+  noLimitAtRoomTop: true,
+  save: (size) => sbp('dez.model/settings/setBoxSize', 'modelSettings', size),
+})
+
+// The content sets the width (`width: max-content` of the root), so that
+// each label shows in full; the user's width is only a floor. In CSS a
+// `min-width` over the `max-width` wins, so `min-width` gets the shown
+// width, which the room already made smaller, never the stored one.
+const panelStyle = computed(() => ({
+  minWidth: `${shownSize.value.width}px`,
+  maxWidth: room.value ? `${room.value.width}px` : undefined,
+  maxHeight: Number.isFinite(shownSize.value.maxHeight) ? `${shownSize.value.maxHeight}px` : undefined,
+}))
 
 // Display name + the toggles that apply to the active model, read through
 // the provider selector boundary (handles unknown/invalid provider ids by
@@ -219,92 +246,95 @@ function resetToDefaults() {
 </script>
 
 <template>
-  <div class="provider-settings-popup">
+  <div ref="panel" class="provider-settings-popup" :style="panelStyle">
     <template v-if="activeModel && (hasValues || lyricsHint || inputHint)">
-      <template v-if="settingDefs.length > 0">
-        <div class="provider-settings-header">{{ providerName }}</div>
-        <div class="provider-settings-rows">
-          <ProviderSettingsSwitch
-            v-for="def in settingDefs"
-            :key="def.key"
-            :label="def.label"
-            :on="!leftOut(def.key) && settingValue(def.key, def.default)"
-            :disabled="leftOut(def.key)"
-            :note="leftOut(def.key) ? 'An incognito tab sends no Dez tools.' : undefined"
-            @toggle="toggleSetting(def.key, def.default)"
-          />
-        </div>
-      </template>
-      <template v-if="parameters.length > 0">
-        <div class="provider-settings-header">Model Parameters</div>
-        <div class="provider-settings-rows">
-          <template v-for="parameter in parameters" :key="parameter.name">
-            <label
-              v-if="'options' in parameter || 'min' in parameter"
-              class="provider-settings-parameter"
-              :data-parameter="parameter.name"
-            >
-              <span class="provider-settings-label">{{ parameter.label }}</span>
-              <template v-if="'options' in parameter">
-                <select
-                  v-if="parameter.options.length > 0"
-                  class="provider-settings-value provider-settings-select"
-                  :value="selectEntry(parameter)"
-                  @change="chooseOption(parameter, $event)"
-                >
-                  <option v-if="parameter.default === undefined" :value="DEFAULT_ENTRY">Default</option>
-                  <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
-                  <option v-if="parameter.custom" :value="OTHER_ENTRY">Other…</option>
-                </select>
-                <!-- A value that the list does not hold, such as the id of
-                     a voice of the user's account at the provider. -->
-                <input
-                  v-if="showsTextField(parameter)"
-                  class="provider-settings-value provider-settings-text"
-                  type="text"
-                  spellcheck="false"
-                  autocapitalize="off"
-                  autocomplete="off"
-                  :maxlength="MAX_CUSTOM_VALUE_LENGTH"
-                  :value="customText(parameter)"
-                  :placeholder="parameter.options.length > 0 ? 'Type a value' : 'Default'"
-                  :title="customText(parameter)"
-                  @change="chooseText(parameter, $event)"
-                >
-              </template>
-              <!-- An empty field stands for the provider's own default, as
-                   the "Default" entry of a select does. -->
-              <input
-                v-else
-                class="provider-settings-value"
-                type="number"
-                :step="parameter.step ?? 1"
-                :min="parameter.min"
-                :max="parameter.max"
-                :value="rangeText(parameter)"
-                :placeholder="parameter.default === undefined ? 'Default' : ''"
-                :title="`${parameter.min} to ${parameter.max}`"
-                @change="chooseNumber(parameter, $event)"
-              >
-            </label>
+      <div class="provider-settings-body">
+        <template v-if="settingDefs.length > 0">
+          <div class="provider-settings-header">{{ providerName }}</div>
+          <div class="provider-settings-rows">
             <ProviderSettingsSwitch
-              v-else
-              :data-parameter="parameter.name"
-              :label="parameter.label"
-              :on="switchIsOn(parameter)"
-              @toggle="toggleSwitch(parameter)"
+              v-for="def in settingDefs"
+              :key="def.key"
+              :label="def.label"
+              :on="!leftOut(def.key) && settingValue(def.key, def.default)"
+              :disabled="leftOut(def.key)"
+              :note="leftOut(def.key) ? 'An incognito tab sends no Dez tools.' : undefined"
+              @toggle="toggleSetting(def.key, def.default)"
             />
-          </template>
-        </div>
-      </template>
-      <template v-if="inputHint">
-        <div class="provider-settings-header">Input</div>
-        <div class="provider-settings-hint">{{ inputHint }}</div>
-      </template>
-      <template v-if="lyricsHint">
-        <div class="provider-settings-header">Lyrics</div>
-        <div class="provider-settings-hint">{{ lyricsHint }}</div>
-      </template>
+          </div>
+        </template>
+        <template v-if="parameters.length > 0">
+          <div class="provider-settings-header">Model Parameters</div>
+          <div class="provider-settings-rows">
+            <template v-for="parameter in parameters" :key="parameter.name">
+              <label
+                v-if="'options' in parameter || 'min' in parameter"
+                class="provider-settings-parameter"
+                :data-parameter="parameter.name"
+              >
+                <span class="provider-settings-label">{{ parameter.label }}</span>
+                <template v-if="'options' in parameter">
+                  <select
+                    v-if="parameter.options.length > 0"
+                    class="provider-settings-value provider-settings-select"
+                    :value="selectEntry(parameter)"
+                    @change="chooseOption(parameter, $event)"
+                  >
+                    <option v-if="parameter.default === undefined" :value="DEFAULT_ENTRY">Default</option>
+                    <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
+                    <option v-if="parameter.custom" :value="OTHER_ENTRY">Other…</option>
+                  </select>
+                  <!-- A value that the list does not hold, such as the id of
+                       a voice of the user's account at the provider. -->
+                  <input
+                    v-if="showsTextField(parameter)"
+                    class="provider-settings-value provider-settings-text"
+                    type="text"
+                    spellcheck="false"
+                    autocapitalize="off"
+                    autocomplete="off"
+                    :maxlength="MAX_CUSTOM_VALUE_LENGTH"
+                    :value="customText(parameter)"
+                    :placeholder="parameter.options.length > 0 ? 'Type a value' : 'Default'"
+                    :title="customText(parameter)"
+                    @change="chooseText(parameter, $event)"
+                  >
+                </template>
+                <!-- An empty field stands for the provider's own default, as
+                     the "Default" entry of a select does. -->
+                <input
+                  v-else
+                  class="provider-settings-value"
+                  type="number"
+                  :step="parameter.step ?? 1"
+                  :min="parameter.min"
+                  :max="parameter.max"
+                  :value="rangeText(parameter)"
+                  :placeholder="parameter.default === undefined ? 'Default' : ''"
+                  :title="`${parameter.min} to ${parameter.max}`"
+                  @change="chooseNumber(parameter, $event)"
+                >
+              </label>
+              <ProviderSettingsSwitch
+                v-else
+                :data-parameter="parameter.name"
+                :label="parameter.label"
+                :on="switchIsOn(parameter)"
+                @toggle="toggleSwitch(parameter)"
+              />
+            </template>
+          </div>
+        </template>
+        <template v-if="inputHint">
+          <div class="provider-settings-header">Input</div>
+          <div class="provider-settings-hint">{{ inputHint }}</div>
+        </template>
+        <template v-if="lyricsHint">
+          <div class="provider-settings-header">Lyrics</div>
+          <div class="provider-settings-hint">{{ lyricsHint }}</div>
+        </template>
+      </div>
+      <!-- Under the body, so that it is always in view. -->
       <button
         v-if="hasValues"
         class="provider-settings-reset"
@@ -319,15 +349,21 @@ function resetToDefaults() {
     <div v-else class="provider-settings-empty">
       {{ !activeModel ? 'No provider selected' : descriptor ? 'No Settings for this model' : `No Settings for ${providerName}` }}
     </div>
+    <PickerHandles @press="startResize" />
   </div>
 </template>
 
 <style scoped>
+/* The width is that of the longest row with its whole label: each part
+   that wraps or stretches (a hint, a note, a text field) takes no width
+   of its own (`width: 0; min-width: 100%`). `min-width`, `max-width`, and
+   `max-height` are set inline (`panelStyle`). No `overflow`: the handles
+   are outside the border (`PickerHandles.vue`); the body scrolls. */
 .provider-settings-popup {
   position: absolute;
   bottom: 100%;
   left: 0;
-  width: 250px;
+  width: max-content;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -336,6 +372,17 @@ function resetToDefaults() {
   flex-direction: column;
   margin-bottom: 4px;
   z-index: 50;
+}
+
+/* The radius keeps a scroll bar in the round corners of the panel. A
+   stable gutter keeps a scroll bar that takes room (macOS with a mouse)
+   off the labels. */
+.provider-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-radius: 7px;
 }
 
 .provider-settings-header {
@@ -365,21 +412,20 @@ function resetToDefaults() {
 
 /* A row of the "Model Parameters" section: the label, then a select or a
    number field, and the text field of a value that the list does not hold
-   on a line of its own (the row wraps; the label takes no width of its
-   own, so the select stays on the label's line). A switch parameter has
-   the row of a provider toggle (ProviderSettingsSwitch.vue). */
+   on a line of its own. A grid, not a wrapping flex row: a flex row would
+   count the text field and a second gap in the width of the panel, so the
+   panel would get wider when the user picks "Other…". A switch parameter
+   has the row of a provider toggle (ProviderSettingsSwitch.vue). */
 .provider-settings-parameter {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 4px 8px;
   font-size: 13px;
 }
 
 .provider-settings-value {
-  flex-shrink: 0;
   width: 110px;
   box-sizing: border-box;
   padding: 4px 8px;
@@ -397,10 +443,12 @@ function resetToDefaults() {
   border-color: var(--color-text);
 }
 
-/* A voice id is longer than the field of a list, so it gets the whole
-   width of the popup. */
+/* A voice id is longer than the field of a list, so it gets a line of its
+   own, as wide as the row. */
 .provider-settings-text {
-  flex: 0 0 100%;
+  grid-column: 1 / -1;
+  width: 0;
+  min-width: 100%;
 }
 
 /* The same arrow as the sort select of the history panel. */
@@ -440,6 +488,8 @@ function resetToDefaults() {
 }
 
 .provider-settings-hint {
+  width: 0;
+  min-width: 100%;
   padding: 4px 12px 10px;
   font-size: 12px;
   line-height: 1.4;
@@ -450,6 +500,8 @@ function resetToDefaults() {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 0;
+  min-width: 100%;
   text-align: center;
   min-height: 72px;
   padding: 16px;

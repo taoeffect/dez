@@ -64,9 +64,13 @@ defineEmits<{ toggle: [] }>()
   opacity: 0.5;
 }
 
-/* The label of the popup cuts its one line; a note wraps. */
+/* The label of the popup cuts its one line; a note wraps, and gives the
+   popup no width (`width: 0; min-width: 100%`), as the popup gets the
+   width of its longest label (ProviderSettingsPopup.vue). */
 .provider-settings-note {
   display: block;
+  width: 0;
+  min-width: 100%;
   margin-top: 2px;
   font-size: 11px;
   line-height: 1.3;

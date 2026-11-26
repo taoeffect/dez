@@ -222,9 +222,9 @@ function onOverlayClick(event: MouseEvent) {
               shows the settings of that model. The picker's button shows the provider first, in a
               small box, then the name of the model: a router such as TrustedRouter or OpenRouter
               can give a model a name that starts with the name of the company that made it. To
-              make the open picker larger, drag its top edge, its right edge, or its top right
-              corner; Dez keeps that size. Add your API keys and your own providers in Settings
-              (<kbd>{{ keys.settings }}</kbd>) › Providers. Models
+              make the open picker or the open settings of the gear larger, drag its top edge, its
+              right edge, or its top right corner; Dez keeps that size. Add your API keys and your
+              own providers in Settings (<kbd>{{ keys.settings }}</kbd>) › Providers. Models
               can use Dez tools, for example to
               find other models, to ask them for images and clips, to cut and join clips, to run
               code, and to write small apps. Slow

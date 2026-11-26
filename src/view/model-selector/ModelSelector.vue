@@ -4,9 +4,11 @@ import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { UNKNOWN_PROVIDER, modelFactLines, modelFacts } from '../modelLabel'
 import type { ModelInfo } from '../../model/providers'
+import { MODEL_PICKER_SIZE_DEFAULT } from '../../model/modelPickerSize'
 import ModelPicker from './ModelPicker.vue'
+import PickerHandles from './PickerHandles.vue'
 import ProviderSettingsPopup from './ProviderSettingsPopup.vue'
-import { PICKER_EDGES, usePickerResize } from './pickerResize'
+import { usePickerResize } from './pickerResize'
 
 const { activeModel, settings, modelDisplayNames } = useModelState()
 
@@ -15,7 +17,11 @@ const settingsOpen = ref(false)
 const dropdownEl = ref<HTMLElement | null>(null)
 const picker = ref<InstanceType<typeof ModelPicker> | null>(null)
 const pickerBox = ref<HTMLElement | null>(null)
-const { shownSize, startResize } = usePickerResize(pickerBox, () => settings.value.modelPickerSize)
+const { shownSize, startResize } = usePickerResize(pickerBox, {
+  storedSize: () => settings.value.modelPickerSize,
+  min: MODEL_PICKER_SIZE_DEFAULT,
+  save: (size) => sbp('dez.model/settings/setBoxSize', 'modelPicker', size),
+})
 
 // What the model button shows: the provider in a tag, then the model name.
 // A router names some models after the company that made them ("Z.ai: GLM
@@ -154,17 +160,7 @@ onUnmounted(() => {
         @select="selectModel"
         @configure="openProviderConfig"
       />
-      <!-- A pointer control only; `.prevent` keeps the focus in the search
-           field and starts no text selection. -->
-      <div
-        v-for="edge in PICKER_EDGES"
-        :key="edge"
-        class="model-dropdown-handle"
-        :class="`model-dropdown-handle--${edge}`"
-        aria-hidden="true"
-        @pointerdown="startResize(edge, $event)"
-        @mousedown.prevent
-      ></div>
+      <PickerHandles @press="startResize" />
     </div>
 
     <ProviderSettingsPopup v-if="settingsOpen" />
@@ -280,61 +276,5 @@ onUnmounted(() => {
   flex-direction: column;
   margin-bottom: 4px;
   z-index: 50;
-}
-
-/* The resize handles: strips along the top and right edges and a square on
-   the top right corner, which covers the ends of the strips. A strip covers
-   the border and 7 px outside it (`PICKER_ROOM_MARGIN_PX` keeps that part
-   in the window), so it takes none of the list's scrollbar; the corner
-   reaches 6 px in, into the padding of the search row. Two-way cursors, as
-   each handle makes the picker larger and smaller. */
-.model-dropdown-handle {
-  position: absolute;
-  z-index: 1;
-}
-
-.model-dropdown-handle--top {
-  top: -8px;
-  left: 0;
-  right: 0;
-  height: 8px;
-  cursor: ns-resize;
-}
-
-.model-dropdown-handle--right {
-  top: 0;
-  right: -8px;
-  bottom: 0;
-  width: 8px;
-  cursor: ew-resize;
-}
-
-.model-dropdown-handle--corner {
-  top: -8px;
-  right: -8px;
-  width: 14px;
-  height: 14px;
-  cursor: nesw-resize;
-}
-</style>
-
-<!-- The cursor of a running resize, on every element: the pointer leaves
-     the thin handle during a drag, and pointer capture does not keep the
-     handle's cursor in every WebKit. `usePickerResize` sets the class on
-     `<html>`. Not scoped, as it must reach the whole page. -->
-<style>
-html.picker-resizing--top,
-html.picker-resizing--top * {
-  cursor: ns-resize !important;
-}
-
-html.picker-resizing--right,
-html.picker-resizing--right * {
-  cursor: ew-resize !important;
-}
-
-html.picker-resizing--corner,
-html.picker-resizing--corner * {
-  cursor: nesw-resize !important;
 }
 </style>

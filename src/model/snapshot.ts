@@ -6,6 +6,7 @@ import type { MoneyLimit } from './chat/moneyLimit'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
 import type { ModelPickerSize } from './modelPickerSize'
+import type { ModelSettingsSize } from './modelSettingsSize'
 import type { ProviderConfig } from './providers/config'
 import type { ParameterValues } from './providers/modelParameters'
 import type { Prompt } from './state/prompts'
@@ -47,6 +48,7 @@ export interface ModelSnapshot {
     favorites: DefaultModel[]
     modelOutputFilter: ModelOutput[]
     modelPickerSize: ModelPickerSize
+    modelSettingsSize: ModelSettingsSize
     providerSettings: Record<string, Record<string, boolean>>
     modelParameters: Record<string, ParameterValues>
     checkForUpdates: boolean

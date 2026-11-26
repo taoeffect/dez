@@ -155,6 +155,20 @@ describe('app state persistence format', () => {
     expect(parseSize(null)).toStrictEqual(defaultSize)
   })
 
+  it('reads a modelSettingsSize with no height limit, rounds and raises a hand-edited one, and reads a bad one as the default', () => {
+    const parseSize = (value: unknown) => parseAppStateJson(JSON.stringify({ modelSettingsSize: value })).modelSettingsSize
+    const defaultSize = { width: 250, maxHeight: null }
+    expect(parseAppStateJson('{}').modelSettingsSize).toStrictEqual(defaultSize)
+    expect(parseAppStateJson(serializeAppStateJson({ modelSettingsSize: { width: 380, maxHeight: null } })).modelSettingsSize)
+      .toStrictEqual({ width: 380, maxHeight: null })
+    expect(parseSize({ width: 380.4, maxHeight: 419.5 })).toStrictEqual({ width: 380, maxHeight: 420 })
+    expect(parseSize({ width: 100, maxHeight: 40 })).toStrictEqual({ width: 250, maxHeight: 160 })
+    expect(parseAppStateJson('{ "modelSettingsSize": { "width": 300, "maxHeight": 1e400 } }').modelSettingsSize).toStrictEqual(defaultSize)
+    expect(parseSize({ width: 300 })).toStrictEqual(defaultSize)
+    expect(parseSize({ width: 300, maxHeight: '400' })).toStrictEqual(defaultSize)
+    expect(parseSize(null)).toStrictEqual(defaultSize)
+  })
+
   it('rounds and clamps a hand-edited editorFontSize, and ignores a bad type', () => {
     const parseFontSize = (value: unknown) => parseAppStateJson(JSON.stringify({ editorFontSize: value })).editorFontSize
     expect(parseAppStateJson('{}').editorFontSize).toBe(15)

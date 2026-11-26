@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import type { ModelPickerSize } from '../../model/modelPickerSize'
-import { draggedPickerSize, fitPickerSize, pickerRoom, type PickerDragStart, type PickerEdge } from './pickerResize'
+import { MODEL_PICKER_SIZE_DEFAULT } from '../../model/modelPickerSize'
+import { draggedPickerSize, fitPickerSize, pickerRoom, type BoxSize, type PickerDragStart, type PickerEdge } from './pickerResize'
 
 const room = { width: 1000, height: 700 }
 
+// The start of a drag of the model picker.
 function start (
   edge: PickerEdge,
   rendered = { width: 400, height: 500 },
-  size: ModelPickerSize = { width: 400, maxHeight: 500 },
+  size: BoxSize = { width: 400, maxHeight: 500 },
 ): PickerDragStart {
-  return { edge, rendered, size, room }
+  return { edge, rendered, size, room, min: MODEL_PICKER_SIZE_DEFAULT, noLimitAtRoomTop: false }
+}
+
+// The start of a drag of a box whose height has no limit by default (the
+// settings panel), with a smaller minimum than the picker's.
+function panelStart (
+  edge: PickerEdge,
+  rendered = { width: 300, height: 500 },
+  size: BoxSize = { width: 250, maxHeight: Infinity },
+): PickerDragStart {
+  return { edge, rendered, size, room, min: { width: 250, maxHeight: 160 }, noLimitAtRoomTop: true }
 }
 
 describe('draggedPickerSize', () => {
@@ -51,6 +62,40 @@ describe('draggedPickerSize', () => {
   it('rounds to whole px', () => {
     expect(draggedPickerSize(start('corner', { width: 400.5, height: 500.25 }), 10.2, -10.4))
       .toStrictEqual({ width: 411, maxHeight: 511 })
+  })
+})
+
+describe('draggedPickerSize of a box with no height limit', () => {
+  it('stays at or over the minimum of its start', () => {
+    expect(draggedPickerSize(panelStart('corner'), -1000, 1000)).toStrictEqual({ width: 250, maxHeight: 160 })
+    expect(draggedPickerSize(panelStart('top'), 0, 100)).toStrictEqual({ width: 250, maxHeight: 400 })
+  })
+
+  it('gives no limit for a drag up to the top of the room, and a limit for a drag up that stays under it', () => {
+    const limited = panelStart('top', { width: 300, height: 300 }, { width: 250, maxHeight: 300 })
+    expect(draggedPickerSize(limited, 0, -150)).toStrictEqual({ width: 250, maxHeight: 450 })
+    expect(draggedPickerSize(limited, 0, -400)).toStrictEqual({ width: 250, maxHeight: Infinity })
+    expect(draggedPickerSize(limited, 0, -1000)).toStrictEqual({ width: 250, maxHeight: Infinity })
+    expect(draggedPickerSize({ ...limited, edge: 'corner' }, 20, -400)).toStrictEqual({ width: 320, maxHeight: Infinity })
+    // The model picker keeps a number.
+    expect(draggedPickerSize(start('top'), 0, -1000)).toStrictEqual({ width: 400, maxHeight: 700 })
+  })
+
+  it('keeps no limit for a drag of the right edge, and for a drag up of a box shorter than the room', () => {
+    expect(draggedPickerSize(panelStart('right'), 40, -30)).toStrictEqual({ width: 340, maxHeight: Infinity })
+    expect(draggedPickerSize(panelStart('top'), 0, -20)).toStrictEqual({ width: 250, maxHeight: Infinity })
+    expect(draggedPickerSize(panelStart('corner'), 0, 0)).toStrictEqual({ width: 250, maxHeight: Infinity })
+  })
+
+  it('starts a drag down from the drawn height', () => {
+    expect(draggedPickerSize(panelStart('top'), 0, 30)).toStrictEqual({ width: 250, maxHeight: 470 })
+  })
+
+  // A small window draws a stored limit of 500 at the room's 400 px.
+  it('gives no limit for a drag up when the window draws the box at the room height', () => {
+    const small = { ...panelStart('top', { width: 300, height: 400 }, { width: 250, maxHeight: 500 }), room: { width: 600, height: 400 } }
+    expect(draggedPickerSize(small, 0, -10)).toStrictEqual({ width: 250, maxHeight: Infinity })
+    expect(draggedPickerSize(small, 0, 10)).toStrictEqual({ width: 250, maxHeight: 390 })
   })
 })
 

@@ -1,12 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { APIMART_CONFIG, FLOW_MUSIC, GENERAL_MODEL, IMAGE_MODEL, MART, MODELS_PATH, MODEL_LIST, SUNO, WHISPER } from './harness/apimartMock'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { filesIn, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, solidPng } from './harness/images'
 import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockModelKey, requestForm, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockModelKey, requestForm } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
@@ -45,85 +46,19 @@ import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededCon
 //
 // One app session serves the whole file; each test starts in a new tab.
 
-// The id `apimart` is the id of the built-in provider.
-const MART: MockProvider = { id: 'mart', name: 'Mart Mock', modelId: 'MiniMax-H3', modelName: 'MiniMax-H3' }
-const GENERAL_MODEL = 'kling-v3'
 const SUBMIT_PATH = `/${MART.id}/v1/videos/generations`
 const taskPath = (taskId: string) => `/${MART.id}/v1/tasks/${taskId}?language=en`
 const quotePath = (query: string) => `/${MART.id}/v1/pricing/model?${query}`
 const MUSIC_PATH = `/${MART.id}/v1/music/generations`
 const musicTaskPath = (taskId: string) => `/${MART.id}/v1/music/tasks/${taskId}?language=en`
-// The music models are config models of the provider (as in the built-in
-// APIMart config) that show when the list holds them.
-const SUNO = { id: 'suno', name: 'Suno' }
-const FLOW_MUSIC = { id: 'flowmusic', name: 'Flow Music' }
-// A transcription model, a config model of the provider as in the built-in
-// APIMart config.
-const WHISPER = 'whisper-1'
 const TRANSCRIBE_PATH = `/${MART.id}/v1/audio/transcriptions`
 // The upload of an input image, for 3 days: the free tier.
 const UPLOAD_PATH = `/${MART.id}/v1/uploads/images?retention_days=3`
 // MiniMax-H3 takes an image whose shorter side is 256 pixels or more.
 const FRAME_PNG = solidPng(320, 256, [220, 40, 40])
-// An image model that Dez knows from its docs.
-const IMAGE_MODEL = 'gpt-image-2'
 const IMAGE_PATH = `/${MART.id}/v1/images/generations`
 // The image of the done image task.
 const MADE_PNG = solidPng(24, 16, [40, 160, 60])
-
-// The general schema of almost all video models (kling-v3 in the live
-// list, 2026-11-24, with the descriptions and some image fields cut).
-const GENERAL_SCHEMA = {
-  model: { type: 'string' },
-  prompt: { type: 'string' },
-  aspect_ratio: { type: 'string' },
-  duration: { minimum: 1, type: 'integer' },
-  first_frame_image: { type: 'string' },
-  generate_audio: { type: 'boolean' },
-  image_urls: { items: { type: 'string' }, minItems: 1, type: 'array' },
-  quality: { type: 'string' },
-  resolution: { type: 'string' },
-  seed: { type: 'integer' },
-  timestamps: { type: 'string' },
-  webhook: { type: 'string' },
-}
-
-const videoEntry = (id: string) => ({
-  id,
-  object: 'model',
-  created: 1626777600,
-  owned_by: 'custom',
-  supported_endpoint_types: ['openai'],
-  category: 'video',
-  capability_tags: ['Image to Video', 'Text to Video'],
-  parameters: { endpoint: '/v1/videos/generations', method: 'POST', input_schema: { type: 'object', properties: GENERAL_SCHEMA } },
-})
-
-// The entries of the music models hold no schema (live list, 2026-11-24).
-const musicEntry = (id: string) =>
-  ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Text to Audio'], parameters: null })
-
-// The entry of an image model, with a few fields of its schema (live
-// list, 2026-11-25, with the descriptions cut).
-const imageEntry = (id: string) => ({
-  id,
-  object: 'model',
-  created: 1626777600,
-  owned_by: 'custom',
-  supported_endpoint_types: ['openai'],
-  category: 'image',
-  capability_tags: ['Text to Image'],
-  parameters: {
-    endpoint: '/v1/images/generations',
-    method: 'POST',
-    input_schema: { type: 'object', properties: { image_urls: { items: { type: 'string' }, minItems: 1, type: 'array' }, n: { type: 'integer' }, prompt: { type: 'string' }, size: { type: 'string' } } },
-  },
-})
-
-// The entry of whisper-1 (live list, 2026-11-24).
-const WHISPER_ENTRY = { id: WHISPER, object: 'model', created: 1626777600, owned_by: 'openai', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Audio'] }
-
-const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id), WHISPER_ENTRY, imageEntry(IMAGE_MODEL)] }
 
 // An answer of the account price request (live, 2026-11-24).
 const quote = (model: string, totalUsd: number) =>
@@ -169,21 +104,10 @@ describe('APIMart media models', () => {
       'song-2.wav': { type: 'audio/wav', bytes: silentWav(3) },
       'made.png': { type: 'image/png', bytes: MADE_PNG },
     })
-    setup = await startMockProviderApp(MART, {
-      mediaApi: { format: 'apimart' },
-      // Every video model comes from the list of the mock.
-      fetchModels: true,
-      models: [
-        { ...SUNO, fetchedOnly: true, outputs: ['audio'], request: 'music' },
-        { ...FLOW_MUSIC, fetchedOnly: true, outputs: ['audio'], request: 'music' },
-        { id: WHISPER, fetchedOnly: true, outputs: ['text'], request: 'transcription' },
-      ],
-      modelListQuery: { expand: 'parameters' },
-      modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] }, image: { outputs: ['image'], request: 'image' } } },
-    }, {
+    setup = await startMockProviderApp(MART, APIMART_CONFIG, {
       heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH, UPLOAD_PATH, IMAGE_PATH],
       jsonAnswers: {
-        [`/${MART.id}/v1/models?expand=parameters`]: MODEL_LIST,
+        [MODELS_PATH]: MODEL_LIST,
         // The free price request that goes before each request.
         [quotePath('model=MiniMax-H3&duration=4&resolution=768P')]: quote(MART.modelId, 0.22848),
         [quotePath('model=kling-v3&duration=5')]: quote(GENERAL_MODEL, 0.336),

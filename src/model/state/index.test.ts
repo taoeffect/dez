@@ -12,6 +12,7 @@ import type { MoneyLimit } from '../chat/moneyLimit'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
+import { MODEL_SETTINGS_MIN_HEIGHT, MODEL_SETTINGS_SIZE_DEFAULT } from '../modelSettingsSize'
 import type { AppStatePayload, ConversationData, ConversationJobs, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
@@ -1489,35 +1490,52 @@ describe('dez.model/settings/setModelOutputFilter', () => {
   })
 })
 
-describe('dez.model/settings/setModelPickerSize', () => {
-  const size = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelPickerSize
+describe('dez.model/settings/setBoxSize', () => {
+  const snapshot = () => sbp('dez.model/settings/snapshot') as SettingsSnapshot
 
   afterEach(() => {
     sbp('dez.model/settings/stopPersistence')
     vi.useRealTimers()
   })
 
-  it('rounds the size and keeps it at least the default in each dimension', () => {
-    sbp('dez.model/settings/setModelPickerSize', { width: 500.6, maxHeight: 100 })
-    expect(size()).toStrictEqual({ width: 501, maxHeight: MODEL_PICKER_SIZE_DEFAULT.maxHeight })
-    sbp('dez.model/settings/setModelPickerSize', { width: 0, maxHeight: 640.2 })
-    expect(size()).toStrictEqual({ width: MODEL_PICKER_SIZE_DEFAULT.width, maxHeight: 640 })
+  it('rounds the size of the picker and keeps it at least the default in each dimension', () => {
+    sbp('dez.model/settings/setBoxSize', 'modelPicker', { width: 500.6, maxHeight: 100 })
+    expect(snapshot().modelPickerSize).toStrictEqual({ width: 501, maxHeight: MODEL_PICKER_SIZE_DEFAULT.maxHeight })
+    sbp('dez.model/settings/setBoxSize', 'modelPicker', { width: 0, maxHeight: 640.2 })
+    expect(snapshot().modelPickerSize).toStrictEqual({ width: MODEL_PICKER_SIZE_DEFAULT.width, maxHeight: 640 })
   })
 
-  it('loads the saved size, saves a change, and saves nothing for the same size', async () => {
-    diskAppState = { modelPickerSize: { width: 480, maxHeight: 420 } }
+  it('sets only the size of the box that it names, and stores no limit for an infinite height of the panel', () => {
+    const pickerSize = snapshot().modelPickerSize
+    sbp('dez.model/settings/setBoxSize', 'modelSettings', { width: 300.4, maxHeight: 90 })
+    expect(snapshot().modelSettingsSize).toStrictEqual({ width: 300, maxHeight: MODEL_SETTINGS_MIN_HEIGHT })
+    sbp('dez.model/settings/setBoxSize', 'modelSettings', { width: 10, maxHeight: Infinity })
+    expect(snapshot().modelSettingsSize).toStrictEqual(MODEL_SETTINGS_SIZE_DEFAULT)
+    expect(snapshot().modelPickerSize).toStrictEqual(pickerSize)
+  })
+
+  it('loads the saved sizes, saves a change, and saves nothing for the same size', async () => {
+    diskAppState = {
+      modelPickerSize: { width: 480, maxHeight: 420 },
+      modelSettingsSize: { width: 300, maxHeight: 400 },
+    }
     await sbp('dez.model/settings/init')
-    expect(size()).toStrictEqual({ width: 480, maxHeight: 420 })
+    expect(snapshot().modelPickerSize).toStrictEqual({ width: 480, maxHeight: 420 })
+    expect(snapshot().modelSettingsSize).toStrictEqual({ width: 300, maxHeight: 400 })
 
     vi.useFakeTimers()
     sbp('dez.model/settings/startPersistence')
-    sbp('dez.model/settings/setModelPickerSize', { width: 600, maxHeight: 420 })
+    sbp('dez.model/settings/setBoxSize', 'modelPicker', { width: 600, maxHeight: 420 })
     await vi.advanceTimersByTimeAsync(1000)
     expect(savedAppStates.at(-1)?.modelPickerSize).toStrictEqual({ width: 600, maxHeight: 420 })
+    sbp('dez.model/settings/setBoxSize', 'modelSettings', { width: 300, maxHeight: Infinity })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.modelSettingsSize).toStrictEqual({ width: 300, maxHeight: null })
 
     // A press on a handle with no move: the same size after the round.
     const saveCount = savedAppStates.length
-    sbp('dez.model/settings/setModelPickerSize', { width: 600.3, maxHeight: 419.8 })
+    sbp('dez.model/settings/setBoxSize', 'modelPicker', { width: 600.3, maxHeight: 419.8 })
+    sbp('dez.model/settings/setBoxSize', 'modelSettings', { width: 299.8, maxHeight: Infinity })
     await vi.advanceTimersByTimeAsync(1000)
     expect(savedAppStates).toHaveLength(saveCount)
   })

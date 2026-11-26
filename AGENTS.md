@@ -153,7 +153,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, `view/thread/IncognitoButton.vue`, the Help button).
 - `view/thread/UsageLabel.vue`, `tokenLabel.ts`, `costLabel.ts`, `moneyLimitLabel.ts`: the token count, the cost, and the money limit (with its popup) of the active tab's conversation.
 - `view/composables/useActiveContextSize.ts`: the one view read of the context size; never read it in a `computed`.
-- `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model), `pickerResize.ts` (the resize of the picker of the bottom bar).
+- `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model), `pickerResize.ts` and `PickerHandles.vue` (the resize of the picker and of the settings panel of the bottom bar).
 - `view/history/HistoryPanel.vue`: saved conversations.
 - `view/help/HelpView.vue`: the Help panel. Keep its texts true when a rule that they tell changes (the Assets page tells the asset rules; the Apps page tells the rules of the apps, of the code that a model runs, and of the sandbox; the Providers page tells the ways of a provider that change what you pay or what leaves the computer). The Apps page lists the built-in apps by hand (`BUILT_IN_APPS`; `tests/e2e/help.e2e.ts` checks it against `src-tauri/builtin-apps/`); Thank You reads the `libraries` of `src-tauri/libs/manifest.json`.
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt, or a notice with one OK button.
