@@ -1214,7 +1214,11 @@ export default sbp('sbp/selectors/register', {
   // start of the persistence.
   'dez.model/viewPlace/set' (place: StoredViewPlace): void {
     const tabStore = useTabStore()
-    if (JSON.stringify(place) === JSON.stringify(tabStore.viewPlace)) return
+    const old = tabStore.viewPlace
+    // Field by field: the view makes places in more than one key order.
+    const fields = Object.entries(place)
+    if (old && fields.length === Object.keys(old).length &&
+      fields.every(([key, value]) => old[key as keyof StoredViewPlace] === value)) return
     tabStore.viewPlace = { ...place }
     if (appStateSavesStarted()) void sbp('dez.model/appState/save')
   },

@@ -21,9 +21,7 @@ function viewTop(view: EditorView): number {
   return view.scrollDOM.getBoundingClientRect().top - view.documentTop
 }
 
-/** The place of the view now. The key order is the order of the schema of
- *  `app_state.json`, so that `dez.model/viewPlace/set` sees the same JSON
- *  for the same place. */
+/** The place of the view now. */
 export function readViewPlace(view: EditorView, conversationId: string): StoredViewPlace {
   measureNow(view)
   const top = viewTop(view)

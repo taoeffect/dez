@@ -628,7 +628,8 @@ describe('the view place of the active tab', () => {
     set(placeOf(tab, 41))
     await vi.waitFor(() => expect(savedAppStates.at(-1)?.viewPlace).toStrictEqual(placeOf(tab, 41)))
     const saves = savedAppStates.length
-    set(placeOf(tab, 41))
+    // The same place with its keys in another order.
+    set({ head: 9, anchor: 3, offset: 7.5, pos: 41, conversationId: tab.conversationId })
     await Promise.resolve()
     expect(savedAppStates).toHaveLength(saves)
 
